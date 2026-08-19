@@ -8,7 +8,8 @@ WORK.mkdir(exist_ok=True)
 
 MODE = os.getenv("UNCOMMONAI_MODE", "research").lower()
 APPROVED_TOPIC = os.getenv("APPROVED_TOPIC", "").strip()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
 FEEDS = {
     "OpenAI": "https://openai.com/news/rss.xml",
@@ -17,8 +18,6 @@ FEEDS = {
     "TechCrunch AI": "https://techcrunch.com/category/artificial-intelligence/feed/",
 }
 
-# These phrases are deliberately designed to turn technical source headlines
-# into viewer-first YouTube concepts rather than copying the source headline.
 ANGLE_RULES = [
     (["robot", "robotics", "lerobot", "physical ai"],
      "AI Agents Are Starting to Teach Robots — Here's Why It Matters"),
@@ -37,9 +36,7 @@ ANGLE_RULES = [
 def gh_api(path, method="GET", body=None):
     token = os.environ["GITHUB_TOKEN"]
     data = None if body is None else json.dumps(body).encode()
-    req = urllib.request.Request(
-        "https://api.github.com" + path, data=data, method=method
-    )
+    req = urllib.request.Request("https://api.github.com" + path, data=data, method=method)
     req.add_header("Authorization", f"Bearer {token}")
     req.add_header("Accept", "application/vnd.github+json")
     req.add_header("X-GitHub-Api-Version", "2022-11-28")
@@ -61,11 +58,8 @@ def collect_news():
                 summary = re.sub("<[^>]+>", " ", e.get("summary", ""))
                 summary = re.sub(r"\s+", " ", summary).strip()
                 rows.append({
-                    "source": source,
-                    "title": title,
-                    "url": e.get("link", ""),
-                    "published": e.get("published", ""),
-                    "summary": summary[:900],
+                    "source": source, "title": title, "url": e.get("link", ""),
+                    "published": e.get("published", ""), "summary": summary[:900],
                 })
         except Exception as exc:
             print("Feed error:", source, exc)
@@ -73,86 +67,56 @@ def collect_news():
 
 def score_item(r):
     text = (r["title"] + " " + r["summary"]).lower()
-    keywords = [
-        "agent", "ai", "model", "openai", "google", "coding", "robot",
-        "robotics", "computer use", "reasoning", "image", "video",
-        "developer", "automation", "chip", "gpu", "physical ai"
-    ]
+    keywords = ["agent","ai","model","openai","google","coding","robot","robotics",
+                "computer use","reasoning","image","video","developer","automation",
+                "chip","gpu","physical ai"]
     score = sum(2 if k in r["title"].lower() else 1 for k in keywords if k in text)
-
-    # Prefer stories that have a concrete change, product, demo, or workflow.
-    for k in ["launch", "release", "new", "demo", "open source", "available",
-              "integration", "update", "announces"]:
-        if k in text:
-            score += 2
+    for k in ["launch","release","new","demo","open source","available","integration","update","announces"]:
+        if k in text: score += 2
     return score
 
-def youtube_angle(source_title, summary):
-    text = (source_title + " " + summary).lower()
-    for keywords, angle in ANGLE_RULES:
-        if any(k in text for k in keywords):
+def youtube_angle(title, summary):
+    text = (title + " " + summary).lower()
+    for keys, angle in ANGLE_RULES:
+        if any(k in text for k in keys):
             return angle
-
-    # Generic fallback: still avoids copying the source title.
-    clean = re.sub(r"\s+", " ", source_title).strip()
-    return f"What This New AI Development Actually Means for You"
+    return "What This New AI Development Actually Means for You"
 
 def create_issue(title, body, labels=None):
-    return gh_api(f"/repos/{repo()}/issues", "POST", {
-        "title": title,
-        "body": body,
-        "labels": labels or []
-    })
+    return gh_api(f"/repos/{repo()}/issues", "POST",
+                  {"title": title, "body": body, "labels": labels or []})
 
 def list_open_issues():
     return gh_api(f"/repos/{repo()}/issues?state=open&per_page=30")
 
 def open_issue_with_marker(marker):
     for i in list_open_issues():
-        if marker in i.get("body", ""):
-            return i
+        if marker in i.get("body", ""): return i
     return None
 
 def research():
     rows = collect_news()
-    if not rows:
-        raise SystemExit("No research signals found.")
-
+    if not rows: raise SystemExit("No research signals found.")
     ranked = sorted(rows, key=score_item, reverse=True)[:12]
-
-    lines = [
-        "# uncommonAI Research",
-        "",
-        "The list below separates the original source headline from the "
-        "viewer-first YouTube angle.",
-        "",
-    ]
-
+    lines = ["# uncommonAI Research", "",
+             "Original source headlines are separated from viewer-first concepts.", ""]
     for i, r in enumerate(ranked, 1):
-        lines += [
-            f"## {i}. {youtube_angle(r['title'], r['summary'])}",
-            f"- Original source headline: {r['title']}",
-            f"- Source: {r['source']}",
-            f"- Published: {r['published']}",
-            f"- URL: {r['url']}",
-            f"- Evidence/context: {r['summary']}",
-            f"- Research score: {score_item(r)}",
-            "",
-        ]
-
+        lines += [f"## {i}. {youtube_angle(r['title'], r['summary'])}",
+                  f"- Original source headline: {r['title']}",
+                  f"- Source: {r['source']}", f"- Published: {r['published']}",
+                  f"- URL: {r['url']}", f"- Evidence/context: {r['summary']}",
+                  f"- Research score: {score_item(r)}", ""]
     (WORK / "research.md").write_text("\n".join(lines), encoding="utf-8")
 
     top = ranked[0]
-    angle = youtube_angle(top["title"], top["summary"])
     marker = "<!-- uncommonai-topic-approval -->"
-
     body = f"""# uncommonAI topic approval
 
 {marker}
 
 ## Recommended YouTube concept
 
-**{angle}**
+**{youtube_angle(top["title"], top["summary"])}**
 
 ### Why this is interesting
 {top["summary"]}
@@ -162,151 +126,118 @@ def research():
 
 Source: {top["url"]}
 
-### Editorial rule
-This concept is intentionally written for a viewer, not copied from the
-source headline. The production stage must independently verify factual
-claims and cite the original source.
-
 ### Approval
 Comment **APPROVE** to start production.
-
 Comment **REJECT** to discard this idea.
 
-The workflow will not publish anything from this approval step.
+No publishing occurs from this approval step.
 """
-
-    existing = open_issue_with_marker(marker)
-    if existing:
-        print("Existing approval issue:", existing["html_url"])
-    else:
-        issue = create_issue(
-            "🎬 uncommonAI — approve next video topic",
-            body,
-            ["uncommonai:topic"]
-        )
+    if not open_issue_with_marker(marker):
+        issue = create_issue("🎬 uncommonAI — approve next video topic", body, ["uncommonai:topic"])
         print("Approval issue:", issue["html_url"])
 
-def openai_client():
-    if not OPENAI_API_KEY:
-        raise SystemExit(
-            "OPENAI_API_KEY is required for production. "
-            "Research mode does not require it."
-        )
-    from openai import OpenAI
-    return OpenAI(api_key=OPENAI_API_KEY)
+def gemini_generate(prompt):
+    if not GEMINI_API_KEY:
+        raise SystemExit("GEMINI_API_KEY is missing.")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.7}
+    }
+    req = urllib.request.Request(url, data=json.dumps(payload).encode(),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=120) as r:
+        data = json.loads(r.read().decode())
+    try:
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception:
+        raise RuntimeError(json.dumps(data)[:3000])
 
-def json_response(client, prompt):
-    r = client.responses.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-5.6-luna"),
-        input=prompt
-    )
-    text = re.sub(r"^```json\s*|\s*```$", "", r.output_text.strip(), flags=re.I)
+def parse_json(text):
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.I)
     return json.loads(text)
 
 def build_package(topic):
-    client = openai_client()
     prompt = f"""
 You are the lead producer for the faceless YouTube channel uncommonAI.
 
-Audience:
-Curious professionals, creators and tech enthusiasts who want to understand
-important AI developments without needing an engineering background.
+Audience: curious professionals, creators and tech enthusiasts who want important
+AI developments explained clearly without needing an engineering background.
 
 Approved concept:
 {topic}
 
-Create one ORIGINAL 7-10 minute YouTube package.
+Create an ORIGINAL 7-10 minute YouTube package.
 
 Rules:
-- The concept must be transformed into an engaging story, not a rewrite of a
-  source article.
-- Hook viewers in the first 15 seconds.
-- Explain why the development matters.
-- Use simple language before technical detail.
-- Never invent statistics, quotes, benchmarks, demonstrations or capabilities.
+- Do not rewrite a source article or another creator.
+- Give a strong curiosity hook in the first 15 seconds.
+- Explain why the development matters to normal people/creators/businesses.
+- Simple language first, technical detail second.
+- Never invent statistics, quotes, benchmarks or capabilities.
 - Separate verified facts from interpretation.
-- Include source URLs in the sources array.
+- Include source URLs.
 - Avoid generic AI-news roundup structure.
-- Give the viewer a clear takeaway.
-- Create 8 visual scenes.
-- Create 3 Shorts derived from the original story but with different hooks.
-- Return valid JSON only.
+- Create 8 scenes and 3 distinct Shorts.
+- Return JSON only.
 
 Schema:
 {{
-"title": "...",
+"title_options": ["...", "...", "..."],
+"chosen_title": "...",
+"hook": "...",
 "description": "...",
 "tags": ["..."],
 "thumbnail_prompt": "...",
 "script": "...",
-"scenes": [
-  {{"narration":"...", "visual_prompt":"..."}}
-],
-"shorts": [
-  {{"title":"...", "script":"...", "visual_prompt":"..."}}
-],
+"scenes": [{{"narration":"...", "visual_prompt":"..."}}],
+"shorts": [{{"title":"...", "script":"...", "visual_prompt":"..."}}],
 "sources": ["https://..."]
 }}
 """
-    package = json_response(client, prompt)
-    (WORK / "package.json").write_text(
-        json.dumps(package, indent=2), encoding="utf-8"
-    )
+    package = parse_json(gemini_generate(prompt))
+    (WORK / "package.json").write_text(json.dumps(package, indent=2), encoding="utf-8")
     return package
 
 def quality_gate(package):
-    client = openai_client()
     prompt = f"""
-Act as an extremely strict YouTube editorial and YPP-quality reviewer.
+Act as a strict YouTube editorial and YPP-quality reviewer.
 
-Review:
+Review this package:
 {json.dumps(package, indent=2)}
 
 Return JSON only:
 {{
-  "pass": true,
-  "originality": 0,
-  "viewer_value": 0,
-  "evidence_quality": 0,
-  "repetition_risk": 0,
-  "copyright_risk": 0,
-  "ypp_risk": 0,
-  "title_quality": 0,
-  "hook_quality": 0,
-  "fixes": []
+"pass": true,
+"originality": 0,
+"viewer_value": 0,
+"evidence_quality": 0,
+"repetition_risk": 0,
+"copyright_risk": 0,
+"ypp_risk": 0,
+"title_quality": 0,
+"hook_quality": 0,
+"fixes": []
 }}
 
-Fail if the package:
-- mainly rewrites another creator/source;
-- is generic mass-produced filler;
-- contains unsupported factual claims;
-- lacks meaningful original explanation or commentary;
-- uses repetitive templates with little viewer value;
-- has high copyright or YPP risk.
+Fail if it is generic filler, mainly copied/rephrased, unsupported, repetitive,
+or lacks meaningful original explanation/commentary.
 """
-    gate = json_response(client, prompt)
-    (WORK / "quality_gate.json").write_text(
-        json.dumps(gate, indent=2), encoding="utf-8"
-    )
+    gate = parse_json(gemini_generate(prompt))
+    (WORK / "quality_gate.json").write_text(json.dumps(gate, indent=2), encoding="utf-8")
     return gate
 
 def produce():
-    if not APPROVED_TOPIC:
-        raise SystemExit("APPROVED_TOPIC is missing.")
-
+    if not APPROVED_TOPIC: raise SystemExit("APPROVED_TOPIC is missing.")
     package = build_package(APPROVED_TOPIC)
     gate = quality_gate(package)
-
-    if not gate.get("pass"):
-        raise SystemExit(
-            "Quality gate failed. See workspace/quality_gate.json."
-        )
-
+    if not gate.get("pass"): raise SystemExit("Quality gate failed.")
+    title = package.get("chosen_title", package.get("title_options", ["UncommonAI video"])[0])
     body = f"""# uncommonAI — production ready
 
 <!-- uncommonai-production -->
 
-## {package['title']}
+## {title}
 
 Quality gate: **PASS**
 
@@ -316,26 +247,17 @@ Evidence quality: {gate.get('evidence_quality')}
 Title quality: {gate.get('title_quality')}
 Hook quality: {gate.get('hook_quality')}
 
-The package is stored in the workflow artifact.
+The generated package is available as a GitHub Actions artifact.
 
-### Final approval
+Comment **PUBLISH** only after reviewing it.
 
-Comment **PUBLISH** only after reviewing the generated package.
-
-No YouTube upload occurs from the topic approval.
+No YouTube upload occurs yet.
 """
-
-    issue = create_issue(
-        f"🎬 uncommonAI — final approval: {package['title']}",
-        body,
-        ["uncommonai:ready-to-publish"]
-    )
+    issue = create_issue(f"🎬 uncommonAI — final approval: {title}", body,
+                         ["uncommonai:ready-to-publish"])
     print("Final approval issue:", issue["html_url"])
 
 if __name__ == "__main__":
-    if MODE == "research":
-        research()
-    elif MODE == "produce":
-        produce()
-    else:
-        raise SystemExit("UNCOMMONAI_MODE must be research or produce.")
+    if MODE == "research": research()
+    elif MODE == "produce": produce()
+    else: raise SystemExit("UNCOMMONAI_MODE must be research or produce.")
