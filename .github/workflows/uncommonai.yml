@@ -1,1 +1,155 @@
+name: uncommonAI Autopilot V4
 
+on:
+  schedule:
+    - cron: "0 4 * * 1"
+
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Choose what to run"
+        required: true
+        default: "research"
+        type: choice
+        options:
+          - research
+          - produce
+      approved_topic:
+        description: "Topic for produce mode"
+        required: false
+        type: string
+
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+
+  research:
+    if: >
+      github.event_name == 'schedule' ||
+      (
+        github.event_name == 'workflow_dispatch' &&
+        inputs.mode == 'research'
+      )
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install feedparser
+
+      - name: Run AI research
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UNCOMMONAI_MODE: research
+        run: python uncommonai_cloud.py
+
+      - name: Save research
+        uses: actions/upload-artifact@v4
+        with:
+          name: uncommonai-research
+          path: workspace/
+          retention-days: 7
+
+
+  produce_from_approval:
+    if: >
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request == null &&
+      contains(github.event.comment.body, 'APPROVE') &&
+      contains(github.event.issue.body, '<!-- uncommonai-topic-approval -->')
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install feedparser openai
+
+      - name: Extract approved topic
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+
+          body = os.environ["ISSUE_BODY"]
+
+          match = re.search(
+              r"\*\*Recommended topic\*\*\s*\n(.+)",
+              body
+          )
+
+          if not match:
+              raise SystemExit("Could not find approved topic")
+
+          topic = match.group(1).strip()
+
+          with open("/tmp/topic.txt", "w") as f:
+              f.write(topic)
+          PY
+
+      - name: Generate production package
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          UNCOMMONAI_MODE: produce
+          APPROVED_TOPIC: ""
+        run: |
+          export APPROVED_TOPIC="$(cat /tmp/topic.txt)"
+          python uncommonai_cloud.py
+
+      - name: Save production package
+        uses: actions/upload-artifact@v4
+        with:
+          name: uncommonai-production
+          path: workspace/
+          retention-days: 7
+
+      - name: Request final approval
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue comment ${{ github.event.issue.number }} \
+            --body "✅ Production package is ready. Download the **uncommonai-production** artifact, review it, then comment **PUBLISH** when you approve."
+
+
+  final_approval:
+    if: >
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request == null &&
+      contains(github.event.comment.body, 'PUBLISH') &&
+      contains(github.event.issue.body, '<!-- uncommonai-production -->')
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Confirm final approval
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue comment ${{ github.event.issue.number }} \
+            --body "✅ PUBLISH approval received. YouTube publishing will be enabled after the one-time OAuth setup is completed. No video has been published yet."
