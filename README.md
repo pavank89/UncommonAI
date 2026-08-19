@@ -1,44 +1,33 @@
-# uncommonAI — GitHub Autopilot V3
+# uncommonAI — Autopilot V4
 
-Phone-first automation for the uncommonAI YouTube channel.
+This version is **phone-first** and uses GitHub Issues as the approval console.
+
+## How it works
+
+1. Weekly GitHub Action collects AI/tech signals and opens an approval issue.
+2. You comment `APPROVE` from your phone.
+3. GitHub runs the AI production package.
+4. It creates a final-approval issue and uploads the package as an artifact.
+5. You review it and comment `PUBLISH`.
+6. YouTube publishing remains locked until the one-time OAuth refresh token is configured.
+
+## Free vs paid
+
+**Free infrastructure:** GitHub Actions + RSS research + GitHub Issues/artifacts.
+
+**Potentially paid:** AI model API calls for script/voice/images. This package does
+not pretend those APIs are free.
+
+## Secrets
+
+Add only these as GitHub Actions secrets:
+
+- `OPENAI_API_KEY` — needed for production.
+- Later: `YOUTUBE_TOKEN_JSON` — only after the YouTube OAuth setup is completed.
+
+Never put secrets in this repository.
 
 ## Important
 
-This repository is public. **Never commit secrets.**
-
-The workflow expects these GitHub Actions secrets:
-
-- `OPENAI_API_KEY`
-- `YOUTUBE_CLIENT_SECRET_JSON`
-
-The first version of the cloud workflow uses GitHub-hosted `ubuntu-latest`.
-GitHub currently says standard runners are free for public repositories.
-
-## What this V3 does
-
-Research → strategy → script → editorial gate → AI narration → AI visuals →
-FFmpeg assembly → thumbnail → Shorts → final approval → YouTube upload.
-
-## Reality about "free"
-
-GitHub Actions can provide the compute layer at no charge for this public
-repository. AI model APIs can still charge for usage. This package does not
-promise zero AI/API cost.
-
-## YouTube OAuth
-
-Do not put your Google password in GitHub.
-
-Create a Google OAuth Desktop client and store the complete downloaded JSON
-contents as the GitHub Actions secret `YOUTUBE_CLIENT_SECRET_JSON`.
-
-The first cloud run may require an interactive OAuth consent step. A fully
-headless YouTube upload requires completing OAuth once and securely persisting
-the resulting refresh token. The next iteration should store that token as a
-GitHub secret rather than committing it.
-
-## Recommended first test
-
-Run the workflow in **research** mode first. Do not attempt automatic
-publishing until OAuth has been completed and tested.
-
+The V4 workflow intentionally does NOT publish automatically yet. This prevents
+a broken OAuth setup from wasting a production run or exposing credentials.
