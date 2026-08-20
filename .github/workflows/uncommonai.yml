@@ -57,7 +57,12 @@ jobs:
           retention-days: 7
 
   produce_from_approval:
-    if: github.event_name == 'issue_comment' && github.event.issue.pull_request == null && contains(github.event.comment.body, 'APPROVE') && contains(github.event.issue.body, '<!-- uncommonai-topic-approval -->')
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'produce') ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request == null &&
+       contains(github.event.comment.body, 'APPROVE') &&
+       contains(github.event.issue.body, '<!-- uncommonai-topic-approval -->'))
     runs-on: ubuntu-latest
 
     steps:
@@ -75,45 +80,51 @@ jobs:
       - name: Extract approved topic
         env:
           ISSUE_BODY: ${{ github.event.issue.body }}
+          DISPATCH_TOPIC: ${{ inputs.approved_topic }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           python - <<'PY'
           import os
           import re
 
-          body = os.environ["ISSUE_BODY"]
+          event_name = os.environ["EVENT_NAME"]
+          dispatch_topic = os.environ.get("DISPATCH_TOPIC", "").strip()
 
-          patterns = [
-              r"##\s+Recommended topic\s*\n\s*\*\*(.+?)\*\*",
-              r"##\s+Recommended YouTube concept\s*\n\s*\*\*(.+?)\*\*",
-          ]
+          if event_name == "workflow_dispatch":
+              topic = dispatch_topic
+          else:
+              body = os.environ["ISSUE_BODY"]
 
-          topic = None
+              patterns = [
+                  r"##\s+Recommended topic\s*\n\s*\*\*(.+?)\*\*",
+                  r"##\s+Recommended YouTube concept\s*\n\s*\*\*(.+?)\*\*",
+              ]
 
-          for pattern in patterns:
-              match = re.search(
-                  pattern,
-                  body,
-                  re.IGNORECASE | re.DOTALL
-              )
+              topic = None
 
-              if match:
-                  topic = re.sub(
-                      r"\s+",
-                      " ",
-                      match.group(1)
-                  ).strip()
-                  break
+              for pattern in patterns:
+                  match = re.search(
+                      pattern,
+                      body,
+                      re.IGNORECASE | re.DOTALL
+                  )
+
+                  if match:
+                      topic = re.sub(
+                          r"\s+",
+                          " ",
+                          match.group(1)
+                      ).strip()
+                      break
 
           if not topic:
-              raise SystemExit("Could not find approved topic")
+              raise SystemExit(
+                  "No approved topic supplied. For manual produce testing, enter a topic in approved_topic."
+              )
 
           print(f"Approved topic: {topic}")
 
-          with open(
-              "/tmp/topic.txt",
-              "w",
-              encoding="utf-8"
-          ) as f:
+          with open("/tmp/topic.txt", "w", encoding="utf-8") as f:
               f.write(topic)
           PY
 
@@ -135,6 +146,7 @@ jobs:
           retention-days: 7
 
       - name: Request final approval
+        if: github.event_name == 'issue_comment'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
