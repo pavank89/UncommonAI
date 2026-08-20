@@ -139,19 +139,48 @@ No publishing occurs from this approval step.
 def gemini_generate(prompt):
     if not GEMINI_API_KEY:
         raise SystemExit("GEMINI_API_KEY is missing.")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/"
+        f"models/{GEMINI_MODEL}:generateContent"
+        f"?key={GEMINI_API_KEY}"
+    )
+
     payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.7}
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt}
+                ]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.7
+        }
     }
-    req = urllib.request.Request(url, data=json.dumps(payload).encode(),
-                                 headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=120) as r:
-        data = json.loads(r.read().decode())
+
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST"
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8", errors="replace")
+        print("GEMINI API ERROR:")
+        print(error_body)
+        raise
+
     try:
         return data["candidates"][0]["content"]["parts"][0]["text"]
-    except Exception:
-        raise RuntimeError(json.dumps(data)[:3000])
+    except (KeyError, IndexError, TypeError) as e:
+        print("Unexpected Gemini response:")
+        print(json.dumps(data, indent=2))
+        raise SystemExit(f"Could not parse Gemini response: {e}")
 
 def parse_json(text):
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.I)
