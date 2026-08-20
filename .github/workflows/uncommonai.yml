@@ -27,15 +27,8 @@ permissions:
   issues: write
 
 jobs:
-
   research:
-    if: >
-      github.event_name == 'schedule' ||
-      (
-        github.event_name == 'workflow_dispatch' &&
-        inputs.mode == 'research'
-      )
-
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'research')
     runs-on: ubuntu-latest
 
     steps:
@@ -63,14 +56,8 @@ jobs:
           path: workspace/
           retention-days: 7
 
-
   produce_from_approval:
-    if: >
-      github.event_name == 'issue_comment' &&
-      github.event.issue.pull_request == null &&
-      contains(github.event.comment.body, 'APPROVE') &&
-      contains(github.event.issue.body, '<!-- uncommonai-topic-approval -->')
-
+    if: github.event_name == 'issue_comment' && github.event.issue.pull_request == null && contains(github.event.comment.body, 'APPROVE') && contains(github.event.issue.body, '<!-- uncommonai-topic-approval -->')
     runs-on: ubuntu-latest
 
     steps:
@@ -95,22 +82,38 @@ jobs:
 
           body = os.environ["ISSUE_BODY"]
 
-          match = re.search(
-              r"## Recommended YouTube concept\s*
-\s*\*\*(.+?)\*\*",
-              body,
-              re.IGNORECASE | re.DOTALL
-          )
+          patterns = [
+              r"##\s+Recommended topic\s*\n\s*\*\*(.+?)\*\*",
+              r"##\s+Recommended YouTube concept\s*\n\s*\*\*(.+?)\*\*",
+          ]
 
-          if not match:
-              raise SystemExit("Could not find approved YouTube concept")
+          topic = None
 
-          topic = re.sub(r"\s+", " ", match.group(1)).strip()
+          for pattern in patterns:
+              match = re.search(
+                  pattern,
+                  body,
+                  re.IGNORECASE | re.DOTALL
+              )
+
+              if match:
+                  topic = re.sub(
+                      r"\s+",
+                      " ",
+                      match.group(1)
+                  ).strip()
+                  break
 
           if not topic:
-              raise SystemExit("Approved topic is empty")
+              raise SystemExit("Could not find approved topic")
 
-          with open("/tmp/topic.txt", "w", encoding="utf-8") as f:
+          print(f"Approved topic: {topic}")
+
+          with open(
+              "/tmp/topic.txt",
+              "w",
+              encoding="utf-8"
+          ) as f:
               f.write(topic)
           PY
 
@@ -135,16 +138,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue comment ${{ github.event.issue.number }}             --body "✅ Production package is ready. Download the **uncommonai-production** artifact, review it, then comment **PUBLISH** when you approve. No YouTube video has been published yet."
-
+          gh issue comment ${{ github.event.issue.number }} --body "✅ Production package is ready. Download the **uncommonai-production** artifact, review it, then comment **PUBLISH** when you approve. No YouTube video has been published yet."
 
   final_approval:
-    if: >
-      github.event_name == 'issue_comment' &&
-      github.event.issue.pull_request == null &&
-      contains(github.event.comment.body, 'PUBLISH') &&
-      contains(github.event.issue.body, '<!-- uncommonai-production -->')
-
+    if: github.event_name == 'issue_comment' && github.event.issue.pull_request == null && contains(github.event.comment.body, 'PUBLISH') && contains(github.event.issue.body, '<!-- uncommonai-topic-approval -->')
     runs-on: ubuntu-latest
 
     steps:
@@ -152,4 +149,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue comment ${{ github.event.issue.number }}             --body "✅ PUBLISH approval received. YouTube publishing will be enabled after the one-time OAuth setup is completed. No video has been published yet."
+          gh issue comment ${{ github.event.issue.number }} --body "✅ PUBLISH approval received. YouTube publishing will be enabled after the one-time OAuth setup is completed. No video has been published yet."
