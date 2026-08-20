@@ -260,9 +260,11 @@ def produce():
     if not APPROVED_TOPIC: raise SystemExit("APPROVED_TOPIC is missing.")
     package = build_package(APPROVED_TOPIC)
     gate = quality_gate(package)
-    if not gate.get("pass"): raise SystemExit("Quality gate failed.")
-    title = package.get("chosen_title", package.get("title_options", ["UncommonAI video"])[0])
-    body = f"""# uncommonAI — production ready
+    if not gate.get("pass"):
+        print("QUALITY GATE RESULT:")
+        print(json.dumps(gate, indent=2))
+        raise SystemExit("Quality gate failed.")
+
 
 <!-- uncommonai-production -->
 
