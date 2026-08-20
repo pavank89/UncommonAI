@@ -47,7 +47,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           UNCOMMONAI_MODE: research
-        run: python uncommonai_cloud.py
+        run: python .github/workflow/uncommonai_cloud.py
 
       - name: Save research
         uses: actions/upload-artifact@v4
@@ -125,7 +125,7 @@ jobs:
           UNCOMMONAI_MODE: produce
         run: |
           export APPROVED_TOPIC="$(cat /tmp/topic.txt)"
-          python uncommonai_cloud.py
+          python .github/workflow/uncommonai_cloud.py
 
       - name: Save production package
         uses: actions/upload-artifact@v4
