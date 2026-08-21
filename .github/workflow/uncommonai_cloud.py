@@ -244,70 +244,240 @@ def build_package(topic):
     prompt = f"""
 You are the lead producer for the faceless YouTube channel uncommonAI.
 
-Audience: curious professionals, creators and tech enthusiasts who want important
-AI developments explained clearly without needing an engineering background.
+Audience:
+Curious professionals, creators, developers and tech enthusiasts who want
+important AI developments explained clearly without needing an engineering
+background.
 
-Approved concept:
+APPROVED CONCEPT:
 {topic}
 
-Create an ORIGINAL 7-10 minute YouTube package.
+CRITICAL TOPIC LOCK:
+The approved concept above is the ONLY subject of this video.
+Do not replace it with a different topic, trend, list, or angle.
+The title, hook, description, script, scenes, Shorts, and sources must all
+directly support the approved concept.
 
-Rules:
+Create an ORIGINAL 8-10 minute YouTube package with approximately 1200-1500
+spoken words.
+
+RULES:
 - Do not rewrite a source article or another creator.
 - Give a strong curiosity hook in the first 15 seconds.
-- Explain why the development matters to normal people/creators/businesses.
+- Explain why the development matters to normal people, creators and businesses.
 - Simple language first, technical detail second.
-- Never invent statistics, quotes, benchmarks or capabilities.
+- Never invent statistics, quotes, benchmarks, capabilities, experiments,
+  customer stories, personal experiences, or productivity gains.
 - Separate verified facts from interpretation.
-- Include source URLs.
+- Use specific real products/tools when the topic is about tools.
+- Include specific primary/technical source URLs.
 - Avoid generic AI-news roundup structure.
-- Create 8 scenes and 3 distinct Shorts.
-- Return JSON only.
+- Avoid vague marketing language such as "changing everything", "cutting through
+  the hype", or "verified productivity gains" unless backed by a concrete fact.
+- Create exactly 8 scenes and exactly 3 distinct Shorts.
+- Return valid JSON only.
+
+TOOL-SPECIFIC REQUIREMENT:
+If the approved topic asks for five AI tools, identify EXACTLY FIVE specific,
+real AI products/tools.
+
+Do NOT call them "Tool number one", "Tool number two", etc.
+
+For each tool include:
+1. Exact product/tool name.
+2. What it actually does.
+3. One concrete productivity workflow it improves.
+4. One concrete example of how a viewer could use it.
+5. A specific primary source URL supporting the relevant capability.
+
+The five tools must be meaningfully different.
+
+Do not invent features. If a capability cannot be supported by a source, omit
+the claim or clearly label it as interpretation.
+
+SOURCE REQUIREMENT:
+Use 4-8 sources.
+At least 3 sources must be specific primary/technical URLs such as:
+- exact product documentation
+- exact GitHub repository
+- exact research paper
+- official product announcement
+Do not use generic company homepages when a specific source exists.
+
+NARRATIVE:
+Scene 1 — concrete hook and the problem.
+Scene 2 — explain the workflow/problem.
+Scene 3 — introduce the first concrete tool or mechanism.
+Scene 4 — continue with concrete tools and use cases.
+Scene 5 — limitations/trade-offs.
+Scene 6 — evidence and technical explanation.
+Scene 7 — practical comparison or decision framework.
+Scene 8 — conclusion with actionable advice.
+
+Each scene must add new information. Do not repeat the same point eight times.
+
+SHORTS:
+Create 3 genuinely different Shorts. Each must have its own takeaway and must
+not simply copy a paragraph from the main script.
+
+YOUTUBE/YPP QUALITY:
+- No copied scripts.
+- No article compilation.
+- No repetitive filler.
+- No fabricated claims.
+- No misleading title or thumbnail.
+- Provide meaningful original explanation and analysis.
+- The package should feel like an experienced technical creator explaining
+  something useful, not mass-produced AI content.
+
+JSON REQUIREMENTS:
+Return ONLY one valid JSON object.
+Do not use Markdown code fences.
+Do not include text before or after the JSON.
+Every array and object must be properly closed.
+Do not use trailing commas.
+The "sources" field must contain plain URL strings, never Markdown links.
 
 Schema:
 {{
-"title_options": ["...", "...", "..."],
-"chosen_title": "...",
-"hook": "...",
-"description": "...",
-"tags": ["..."],
-"thumbnail_prompt": "...",
-"script": "...",
-"scenes": [{{"narration":"...", "visual_prompt":"..."}}],
-"shorts": [{{"title":"...", "script":"...", "visual_prompt":"..."}}],
-"sources": ["https://..."]
+  "title_options": ["...", "...", "..."],
+  "chosen_title": "...",
+  "hook": "...",
+  "description": "...",
+  "tags": ["..."],
+  "thumbnail_prompt": "...",
+  "script": "...",
+  "scenes": [
+    {{"narration":"...", "visual_prompt":"..."}}
+  ],
+  "shorts": [
+    {{"title":"...", "script":"...", "visual_prompt":"..."}}
+  ],
+  "sources": ["https://..."]
 }}
+
+FINAL SELF-REVIEW BEFORE RETURNING JSON:
+- Is the entire package about the approved concept?
+- If five tools are requested, are exactly five real tools explicitly named?
+- Does each named tool have a concrete use case?
+- Does each named tool have a specific supporting source?
+- Did you avoid labels such as "Tool number one"?
+- Did you avoid unsupported productivity/performance claims?
+- Are at least 3 sources specific primary/technical URLs?
+- Are the failure modes/trade-offs concrete?
+- Does every scene add something new?
+- Are the three Shorts genuinely different?
+- Is the main script approximately 1200-1500 spoken words?
 """
     package = parse_json(gemini_generate(prompt))
-    (WORK / "package.json").write_text(json.dumps(package, indent=2), encoding="utf-8")
+
+    if not isinstance(package, dict):
+        raise SystemExit("Production package is not a JSON object.")
+
+    required = [
+        "title_options",
+        "chosen_title",
+        "hook",
+        "description",
+        "tags",
+        "thumbnail_prompt",
+        "script",
+        "scenes",
+        "shorts",
+        "sources",
+    ]
+
+    missing = [key for key in required if not package.get(key)]
+    if missing:
+        raise SystemExit(
+            "Production package missing: " + ", ".join(missing)
+        )
+
+    if len(package.get("scenes", [])) != 8:
+        raise SystemExit("Production package must contain exactly 8 scenes.")
+
+    if len(package.get("shorts", [])) != 3:
+        raise SystemExit("Production package must contain exactly 3 Shorts.")
+
+    if len(package.get("sources", [])) < 4:
+        raise SystemExit("Production package must contain at least 4 sources.")
+
+    (WORK / "package.json").write_text(
+        json.dumps(package, indent=2),
+        encoding="utf-8"
+    )
+
     return package
 
 def quality_gate(package):
     prompt = f"""
-Act as a strict YouTube editorial and YPP-quality reviewer.
+Act as a strict YouTube editorial, factuality, originality, and YPP-quality
+reviewer.
 
 Review this package:
 {json.dumps(package, indent=2)}
 
 Return JSON only:
 {{
-"pass": true,
-"originality": 0,
-"viewer_value": 0,
-"evidence_quality": 0,
-"repetition_risk": 0,
-"copyright_risk": 0,
-"ypp_risk": 0,
-"title_quality": 0,
-"hook_quality": 0,
-"fixes": []
+  "pass": true,
+  "originality": 0,
+  "viewer_value": 0,
+  "evidence_quality": 0,
+  "repetition_risk": 0,
+  "copyright_risk": 0,
+  "ypp_risk": 0,
+  "title_quality": 0,
+  "hook_quality": 0,
+  "fixes": []
 }}
 
-Fail if it is generic filler, mainly copied/rephrased, unsupported, repetitive,
-or lacks meaningful original explanation/commentary.
+Score every category from 0-10.
+
+PASS RULE:
+pass=true only when:
+- originality >= 7
+- viewer_value >= 7
+- evidence_quality >= 7
+- repetition_risk <= 4
+- copyright_risk <= 3
+- ypp_risk <= 4
+- title_quality >= 7
+- hook_quality >= 7
+
+Review requirements:
+
+1. Do not fail merely because the video discusses AI tools or AI limitations.
+2. Reward concrete technical explanations and original analysis.
+3. Fail generic filler, copied/rephrased content, unsupported claims,
+   repetitive content, or misleading claims.
+4. If the topic asks for five tools, FAIL if the package uses generic labels
+   such as "Tool number one" instead of naming five real products.
+5. If the topic asks for five tools, FAIL if the tools do not have concrete
+   use cases.
+6. Check that at least 3 sources are specific primary/technical URLs.
+7. Generic root domains such as openai.com, google.com, or anthropic.com
+   should not count as strong evidence when a specific product/documentation
+   URL should have been supplied.
+8. Check that important capabilities are supported by the sources.
+9. Penalize vague marketing claims such as "verified productivity gains" when
+   no evidence is provided.
+10. Penalize generic listicle structure if it provides little original analysis.
+11. Do not require a personal experiment unless the package explicitly claims
+   to be one. A clearly labeled educational/representative workflow is valid.
+12. The title must accurately represent what the video actually contains.
+13. The hook should provide a concrete problem or before/after contrast.
+
+If the package fails, provide no more than 5 precise fixes.
+
+Return valid JSON only.
 """
     gate = parse_json(gemini_generate(prompt))
-    (WORK / "quality_gate.json").write_text(json.dumps(gate, indent=2), encoding="utf-8")
+
+    (WORK / "quality_gate.json").write_text(
+        json.dumps(gate, indent=2),
+        encoding="utf-8"
+    )
+
     return gate
 
 def produce():
