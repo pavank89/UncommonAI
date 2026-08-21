@@ -40,7 +40,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install research dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install feedparser
@@ -49,7 +49,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           UNCOMMONAI_MODE: research
-        run: python .github/workflow/uncommonai_cloud.py
+        run: |
+          python .github/workflow/uncommonai_cloud.py
 
       - name: Save research
         uses: actions/upload-artifact@v4
@@ -82,7 +83,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg
           python -m pip install --upgrade pip
-          python -m pip install feedparser pillow "edge-tts==7.2.0"
+          python -m pip install feedparser pillow edge-tts
 
       - name: Extract approved topic
         env:
@@ -263,7 +264,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue comment ${{ github.event.issue.number }} --body "✅ V7 production package, long-form MP4, and 3 Shorts generated and validated. YouTube uploads are disabled for this review run."
+          gh issue comment ${{ github.event.issue.number }} \
+            --body "✅ V7 production package, long-form MP4, and 3 Shorts generated and validated. YouTube uploads are disabled for this review run."
 
   final_approval:
     if: |
@@ -278,4 +280,5 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue comment ${{ github.event.issue.number }} --body "PUBLISH approval was received. YouTube uploads are currently disabled in this review workflow."
+          gh issue comment ${{ github.event.issue.number }} \
+            --body "PUBLISH approval was received. YouTube uploads are currently disabled in this review workflow."
