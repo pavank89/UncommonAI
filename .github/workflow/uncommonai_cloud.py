@@ -204,38 +204,95 @@ def gemini_generate(prompt):
         + api_key
     )
 
-    payload = json.dumps({
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.7,
-            "responseMimeType": "application/json",
-        },
-    }).encode("utf-8")
+    def request_gemini(instruction):
+        payload = json.dumps({
+            "contents": [{"parts": [{"text": instruction}]}],
+            "generationConfig": {
+                "temperature": 0.4,
+                "responseMimeType": "application/json",
+            },
+        }).encode("utf-8")
 
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        method="POST",
-        headers={"Content-Type": "application/json"},
-    )
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                data = json.loads(r.read().decode("utf-8"))
+        except Exception as exc:
+            raise SystemExit(f"Gemini API request failed: {exc}")
+
+        try:
+            return data["candidates"][0]["content"]["parts"][0]["text"]
+        except (KeyError, IndexError, TypeError):
+            raise SystemExit(
+                f"Unexpected Gemini response: {json.dumps(data)[:2000]}"
+            )
+
+    def parse_json(raw):
+        raw = raw.strip()
+
+        raw = re.sub(
+            r"^```(?:json)?\s*|\s*```$",
+            "",
+            raw,
+            flags=re.IGNORECASE,
+        ).strip()
+
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            start = raw.find("{")
+            end = raw.rfind("}")
+
+            if start >= 0 and end > start:
+                return json.loads(raw[start:end + 1])
+
+            raise
+
+    raw = request_gemini(prompt)
 
     try:
-        with urllib.request.urlopen(req, timeout=120) as r:
-            data = json.loads(r.read().decode("utf-8"))
-    except Exception as exc:
-        raise SystemExit(f"Gemini API request failed: {exc}")
+        return parse_json(raw)
+    except json.JSONDecodeError as first_error:
+        print("Gemini returned malformed JSON.")
+        print("Attempting one JSON repair retry...")
 
-    try:
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError, TypeError):
-        raise SystemExit(f"Unexpected Gemini response: {json.dumps(data)[:2000]}")
+        repair_prompt = f"""
+Convert the following malformed JSON into valid JSON.
 
-    text = re.sub(r"^```json\s*|\s*```$", "", text.strip(), flags=re.I)
+STRICT RULES:
+- Return ONLY valid JSON.
+- Use double quotes around every object key.
+- Preserve the original content and meaning.
+- Do not summarize.
+- Do not remove fields.
+- Do not add fields.
+- Do not add markdown fences.
+- Ensure strings are properly escaped.
+- Ensure arrays and objects are properly closed.
 
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise SystemExit(f"Gemini returned invalid JSON: {exc}\n{text[:3000]}")
+Malformed JSON:
+{raw}
+"""
+
+        repaired = request_gemini(repair_prompt)
+
+        try:
+            result = parse_json(repaired)
+            print("Gemini JSON repair succeeded.")
+            return result
+        except json.JSONDecodeError as second_error:
+            raise SystemExit(
+                "Gemini returned invalid JSON after repair retry.\n"
+                f"Original error: {first_error}\n"
+                f"Repair error: {second_error}\n"
+                f"Response:\n{raw[:5000]}"
+            )
 
 
 def build_package(topic):
