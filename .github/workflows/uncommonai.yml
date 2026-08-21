@@ -49,17 +49,6 @@ jobs:
           UNCOMMONAI_MODE: research
         run: python .github/workflow/uncommonai_cloud.py
 
-      - name: Debug research workspace
-        run: |
-          echo "Current directory:"
-          pwd
-          echo ""
-          echo "Workspace:"
-          ls -la ./workspace/ || true
-          echo ""
-          echo "Files:"
-          find ./workspace -maxdepth 3 -type f -print 2>/dev/null || true
-
       - name: Save research
         uses: actions/upload-artifact@v4
         with:
@@ -87,7 +76,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install feedparser
+        run: pip install feedparser pillow edge-tts
 
       - name: Extract approved topic
         env:
@@ -122,11 +111,7 @@ jobs:
                   )
 
                   if match:
-                      topic = re.sub(
-                          r"\s+",
-                          " ",
-                          match.group(1)
-                      ).strip()
+                      topic = re.sub(r"\s+", " ", match.group(1)).strip()
                       break
 
           if not topic:
@@ -153,38 +138,11 @@ jobs:
       - name: Debug production workspace
         run: |
           echo "========================================"
-          echo "CURRENT DIRECTORY"
+          echo "WORKSPACE"
           echo "========================================"
           pwd
-
-          echo ""
-          echo "========================================"
-          echo "ROOT DIRECTORY"
-          echo "========================================"
-          ls -la
-
-          echo ""
-          echo "========================================"
-          echo "WORKSPACE DIRECTORY"
-          echo "========================================"
           ls -la ./workspace/ || true
-
-          echo ""
-          echo "========================================"
-          echo "WORKSPACE FILES"
-          echo "========================================"
           find ./workspace -maxdepth 3 -type f -print 2>/dev/null || true
-
-          echo ""
-          echo "========================================"
-          echo "ALL GENERATED FILES"
-          echo "========================================"
-          find . -maxdepth 5 -type f \
-            \( -name "package.json" \
-            -o -name "production_package.json" \
-            -o -name "production.md" \
-            -o -name "quality_gate.json" \) \
-            -print 2>/dev/null || true
 
       - name: Save production package
         uses: actions/upload-artifact@v4
@@ -194,12 +152,46 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+      - name: Install video renderer
+        run: |
+          cp .github/workflow/video_renderer.py ./video_renderer.py
+
+      - name: Render MP4 video
+        env:
+          VIDEO_VOICE: en-US-AriaNeural
+        run: |
+          python ./video_renderer.py
+
+      - name: Validate MP4
+        run: |
+          test -s ./workspace/uncommonAI_video.mp4
+          ffprobe -v error \
+            -show_entries format=duration,size \
+            -of default=noprint_wrappers=1 \
+            ./workspace/uncommonAI_video.mp4
+
+      - name: Save MP4 video
+        uses: actions/upload-artifact@v4
+        with:
+          name: uncommonai-video
+          path: ./workspace/uncommonAI_video.mp4
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Save video production files
+        uses: actions/upload-artifact@v4
+        with:
+          name: uncommonai-video-production
+          path: ./workspace/video/
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Request final approval
         if: github.event_name == 'issue_comment'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue comment ${{ github.event.issue.number }} --body "✅ Production package is ready. Download the **uncommonai-production** artifact, review it, then comment **PUBLISH** when you approve. No YouTube video has been published yet."
+          gh issue comment ${{ github.event.issue.number }} --body "✅ Production package and MP4 video are ready. Download the **uncommonai-video** artifact and review it before any publishing step. No YouTube video has been published."
 
   final_approval:
     if: github.event_name == 'issue_comment' && github.event.issue.pull_request == null && contains(github.event.comment.body, 'PUBLISH') && contains(github.event.issue.body, '<!-- uncommonai-topic-approval -->')
@@ -210,4 +202,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue comment ${{ github.event.issue.number }} --body "✅ PUBLISH approval received. YouTube publishing will be enabled after the one-time OAuth setup is completed. No video has been published yet."
+          gh issue comment ${{ github.event.issue.number }} --body "✅ PUBLISH approval received. YouTube publishing remains disabled until the separate OAuth/publishing step is configured. No video has been published by this workflow."
