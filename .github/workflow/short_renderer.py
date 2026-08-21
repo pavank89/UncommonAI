@@ -50,25 +50,84 @@ def make_ass(text,dur,path):
    parts=c.split(); mid=len(parts)//2; c=" ".join(parts[:mid])+"\\N"+" ".join(parts[mid:])
   out.append(f"Dialogue: 0,{atime(st)},{atime(en)},Subtitle,,0,0,105,,{c.replace('{','\\{').replace('}','\\}')}")
  path.write_text("\n".join(out)+"\n",encoding="utf-8")
-def kind(value,index):
- v=safe(value).lower()
- if any(k in v for k in ("warning","risk","failure","bug","problem")):return "risk"
- if any(k in v for k in ("compare","versus","before","after","split","vs")):return "compare"
- if any(k in v for k in ("metric","data","chart","growth","trend")):return "metrics"
- if any(k in v for k in ("timeline","sequence","steps")):return "timeline"
- return ["flow","compare","risk","metrics","timeline","flow"][index-1 if index<=6 else (index-1)%6]
+
+def visual_keywords(scene, limit=3):
+    candidates=[]
+    for key in ("visual_labels","key_points","entities","visual_text","key_phrase","heading","title"):
+        value=scene.get(key)
+        if isinstance(value,list): candidates.extend(value)
+        elif value: candidates.append(value)
+    if not candidates:
+        candidates=re.split(r"(?<=[.!?])\s+",safe(scene.get("narration")))
+    labels=[]
+    for item in candidates:
+        item=safe(item)
+        if not item: continue
+        if len(item.split())>6: item=" ".join(item.split()[:6])
+        if item.upper() not in {x.upper() for x in labels}:
+            labels.append(item[:30])
+        if len(labels)>=limit: break
+    return labels or ["INPUT","SYSTEM","RESULT"]
+
+def kind(scene,index,previous=None):
+    text=(safe(scene.get("visual_type") or scene.get("visual") or scene.get("diagram"))+" "+safe(scene.get("title"))+" "+safe(scene.get("narration"))).lower()
+    aliases=[("compare","compare"),("versus","compare"),("risk","risk"),("failure","risk"),("workflow","flow"),("process","flow"),("architecture","architecture"),("system","architecture"),("metric","metrics"),("data","metrics"),("timeline","timeline"),("evidence","evidence"),("fact","evidence"),("decision","decision"),("steps","steps")]
+    for needle,result in aliases:
+        if needle in text and result!=previous:return result
+    rotation=["flow","compare","architecture","risk","journey","evidence","metrics","decision","steps","timeline"]
+    for result in rotation:
+        if result!=previous:return result
+    return "flow"
+
 def center(draw,text,box,font,fill):
- x1,y1,x2,y2=box; b=draw.textbbox((0,0),text,font=font); draw.text(((x1+x2-b[2]+b[0])/2,(y1+y2-b[3]+b[1])/2),text,font=font,fill=fill)
-def visual(draw,k,x,y,w,h,p):
- from PIL import ImageFont
- lf=ImageFont.truetype(BOLD,27); bf=ImageFont.truetype(BOLD,52); sf=ImageFont.truetype(FONT,22)
- if k=="risk":
-  cx=x+w/2; cy=y+h/2; draw.polygon([(cx,cy-155),(cx-155,cy+115),(cx+155,cy+115)],fill=p["panel"],outline=p["accent"]); center(draw,"!",(cx-65,cy-100,cx+65,cy+45),ImageFont.truetype(BOLD,105),p["accent"]); center(draw,"VERIFY",(cx-160,cy+55,cx+160,cy+115),lf,p["text"]); return
- labels={"compare":["BEFORE","AI","AFTER"],"metrics":["SIGNAL","CHANGE","RESULT"],"timeline":["START","TEST","LEARN"],"flow":["INPUT","AI","RESULT"]}[k]
- n=len(labels); gap=25; bw=(w-gap*(n-1))/n; by=y+h*.24
- for i,t in enumerate(labels):
-  bx=x+i*(bw+gap); draw.rounded_rectangle((bx,by,bx+bw,by+230),radius=26,fill=p["panel"],outline=p["accent"],width=4); center(draw,t,(bx,by+30,bx+bw,by+105),lf,p["text"]); center(draw,["01","AI","✓"][i] if n==3 else str(i+1),(bx,by+110,bx+bw,by+205),bf,p["accent2"])
-  if i<n-1: draw.line((bx+bw+5,by+115,bx+bw+gap-8,by+115),fill=p["muted"],width=4)
+    x1,y1,x2,y2=box;b=draw.textbbox((0,0),text,font=font);draw.text(((x1+x2-b[2]+b[0])/2,(y1+y2-b[3]+b[1])/2),text,font=font,fill=fill)
+
+def visual(draw,k,x,y,w,h,p,scene=None):
+    from PIL import ImageFont
+    scene=scene or {}; labels=visual_keywords(scene,3)
+    lf=ImageFont.truetype(BOLD,27); bf=ImageFont.truetype(BOLD,48); sf=ImageFont.truetype(FONT,21)
+    if k=="flow":
+        labels=(labels+["CHECK","RESULT"])[:3]; bw=(w-50)/3; by=y+95
+        for i,text in enumerate(labels):
+            bx=x+i*(bw+25); draw.rounded_rectangle((bx,by,bx+bw,by+245),radius=26,fill=p["panel"],outline=p["accent"],width=3); center(draw,str(i+1),(bx,by+20,bx+bw,by+75),bf,p["accent"]); center(draw,text.upper(),(bx+15,by+100,bx+bw-15,by+180),lf,p["text"])
+            if i<2: draw.line((bx+bw+4,by+122,bx+bw+18,by+122),fill=p["accent2"],width=4)
+    elif k=="compare":
+        labels=(labels+["AI","RESULT"])[:3]; bw=(w-50)/3; by=y+95
+        for i,text in enumerate(labels):
+            bx=x+i*(bw+25); draw.rounded_rectangle((bx,by,bx+bw,by+245),radius=26,fill=p["panel"],outline=p["accent"],width=3); center(draw,["A","B","C"][i],(bx,by+20,bx+bw,by+75),bf,p["accent"]); center(draw,text.upper(),(bx+15,by+100,bx+bw-15,by+180),lf,p["text"])
+    elif k=="architecture":
+        labels=(labels+["SYSTEM","OUTPUT"])[:3]; bw=(w-55)/3; by=y+105
+        for i,text in enumerate(labels):
+            bx=x+i*(bw+27.5); draw.rounded_rectangle((bx,by,bx+bw,by+230),radius=25,fill=p["panel"],outline=p["accent"],width=3); center(draw,f"0{i+1}",(bx,by+18,bx+bw,by+70),sf,p["accent"]); center(draw,text.upper()[:18],(bx+10,by+85,bx+bw-10,by+165),lf,p["text"])
+    elif k=="risk":
+        cx=x+w/2; cy=y+h/2; draw.polygon([(cx,cy-150),(cx-150,cy+110),(cx+150,cy+110)],fill=p["panel"],outline=p["accent"]); center(draw,"!",(cx-70,cy-100,cx+70,cy+35),ImageFont.truetype(BOLD,105),p["accent"]); center(draw,(labels[0] if labels else "RISK").upper()[:20],(x+120,cy+45,x+w-120,cy+105),lf,p["text"])
+    elif k=="metrics":
+        labels=(labels+["SIGNAL","CHANGE","RESULT"])[:3]; bx=x+90; bw=w-180
+        for i,text in enumerate(labels):
+            yy=y+75+i*120; draw.text((bx,yy),text.upper(),font=lf,fill=p["text"])
+            for dot in range(5):
+                px=bx+bw-180+dot*36; fill=p["accent"] if dot<=i else p["bg"]; draw.ellipse((px-9,yy+48,px+9,yy+66),fill=fill,outline=p["muted"])
+        center(draw,"QUALITATIVE — NO INVENTED NUMBERS",(x+70,y+h-80,x+w-70,y+h-30),sf,p["muted"])
+    elif k=="timeline":
+        labels=(labels+["NEXT"])[:3]; yy=y+220; x1=x+80; x2=x+w-80; draw.line((x1,yy,x2,yy),fill=p["muted"],width=5)
+        for i,text in enumerate(labels):
+            px=x1+i*(x2-x1)/2; draw.ellipse((px-25,yy-25,px+25,yy+25),fill=p["accent"]); center(draw,str(i+1),(px-25,yy-25,px+25,yy+25),sf,p["bg"]); center(draw,text.upper()[:18],(px-100,yy+50,px+100,yy+100),sf,p["text"])
+    elif k=="journey":
+        labels=(labels+["OUTCOME"])[:3]
+        for i,text in enumerate(labels):
+            bx=x+120+i*(w-240)/2; cy=y+210+(30 if i%2 else -30); draw.ellipse((bx-55,cy-55,bx+55,cy+55),fill=p["panel"],outline=p["accent"],width=4); center(draw,str(i+1),(bx-40,cy-40,bx+40,cy+40),bf,p["accent"]); center(draw,text.upper()[:16],(bx-100,cy+65,bx+100,cy+110),sf,p["text"])
+    elif k=="evidence":
+        claim=safe(scene.get("key_claim") or scene.get("claim") or (labels[0] if labels else "KEY FINDING")); rect=(x+65,y+55,x+w-65,y+h-55); draw.rounded_rectangle(rect,radius=30,fill=p["panel"],outline=p["accent"],width=3); center(draw,"EVIDENCE",(x+100,y+85,x+w-100,y+135),lf,p["accent"]); lines=wrap(draw,claim,lf,w-220,4); yy=y+180
+        for line in lines: center(draw,line,(x+100,yy,x+w-100,yy+55),lf,p["text"]); yy+=62
+    elif k=="decision":
+        labels=(labels+["TRADE-OFF","DECISION"])[:3]
+        for i,text in enumerate(labels):
+            bx=x+65+i*(w-130)/3; draw.rounded_rectangle((bx,y+120,bx+(w-190)/3,y+330),radius=24,fill=p["panel"],outline=p["accent"] if i==2 else p["muted"],width=3); center(draw,str(i+1),(bx,y+145,bx+(w-190)/3,y+205),bf,p["accent"] if i==2 else p["muted"]); center(draw,text.upper()[:14],(bx+10,y+220,bx+(w-190)/3-10,y+300),sf,p["text"])
+    else:  # steps
+        labels=(labels+["CHECK","RESULT"])[:3]; bw=(w-45)/2
+        for i,text in enumerate(labels):
+            bx=x+(i%2)*(bw+45); yy=y+80+(i//2)*160; draw.rounded_rectangle((bx,yy,bx+bw,yy+125),radius=22,fill=p["panel"],outline=p["accent"],width=3); center(draw,str(i+1),(bx,yy+15,bx+55,yy+60),sf,p["accent"]); center(draw,text.upper()[:20],(bx+45,yy+30,bx+bw-10,yy+95),lf,p["text"])
+
 def takeaway(scene,narration):
  for key in ("takeaway","key_takeaway","summary","lesson"):
   if safe(scene.get(key)): return safe(scene[key])
@@ -80,12 +139,14 @@ def make_card(scene,index,narration,p,path):
  d.rounded_rectangle((38,38,W-38,H-38),radius=34,outline=p["accent"],width=4)
  top=ImageFont.truetype(BOLD,30); small=ImageFont.truetype(FONT,23)
  d.text((70,75),"uncommonAI",font=top,fill=p["text"]); d.text((W-155,80),f"{index:02d}",font=small,fill=p["muted"])
+ d.rounded_rectangle((70,120,W-70,128),radius=4,fill=p["panel"])
+ d.rounded_rectangle((70,120,70+int((W-140)*min(index/8,1.0)),128),radius=4,fill=p["accent"])
  title=safe(scene.get("title") or scene.get("heading") or scene.get("key_phrase") or f"Short {index}"); tf=fit(d,title,BOLD,60,36,850); yy=175
  for line in wrap(d,title,tf,850,3):
   b=d.textbbox((0,0),line,font=tf); d.text(((W-b[2]+b[0])/2,yy),line,font=tf,fill=p["text"]); yy+=b[3]-b[1]+8
  # Visual zone
  topv=505; botv=1100; d.rounded_rectangle((65,topv,W-65,botv),radius=34,fill=p["panel"],outline=p["accent"],width=3)
- visual(d,kind(scene.get("visual_type") or scene.get("visual") or scene.get("diagram"),index),110,topv+35,W-220,botv-topv-70,p)
+ visual(d,scene.get("_renderer_visual_kind") or kind(scene,index),110,topv+35,W-220,botv-topv-70,p,scene)
  # Meaningful takeaway card, not an empty heading.
  tk=takeaway(scene,narration); ttf=fit(d,tk,BOLD,38,25,820); lines=wrap(d,tk,ttf,820,3)
  d.text((70,1160),"THE TAKEAWAY",font=top,fill=p["accent"]); yy=1215
@@ -114,12 +175,17 @@ def main():
  for x in SHORTS_DIR.iterdir():
   if x.is_file():x.unlink()
  palettes=PALETTE.copy(); random.SystemRandom().shuffle(palettes); manifest=[]
+ previous_kind=None
  for i,scene in enumerate(scenes[:3],1):
-  out,dur=render(i,scene,palettes[i-1])
+  scene=dict(scene)
+  chosen=kind(scene,i,previous_kind)
+  scene["_renderer_visual_kind"]=chosen
+  previous_kind=chosen
+  out,dur=render(i,scene,palettes[(i-1)%len(palettes)])
   title=safe(scene.get("title") or scene.get("heading") or scene.get("key_phrase") or f"uncommonAI — Short {i}")
   manifest.append({"index":i,"title":f"uncommonAI — Short {i}","script":safe(scene.get("narration")),"file":str(out),"duration":round(dur,2)})
  MANIFEST.write_text(json.dumps(manifest,indent=2,ensure_ascii=False),encoding="utf-8")
- print("V3 SHORTS CREATED")
+ print("V5 SHORTS CREATED")
  for i in range(1,4):
   p=SHORTS_DIR/f"short_{i:02d}.mp4"; print(f"{p} | {p.stat().st_size} bytes")
 if __name__=="__main__":main()
