@@ -147,6 +147,22 @@ jobs:
           export APPROVED_TOPIC="$(cat /tmp/topic.txt)"
           python .github/workflow/uncommonai_cloud.py
 
+      # ============================================================
+      # UNCOMMONAI CONTENT INTELLIGENCE / MONETIZATION SAFETY
+      # ============================================================
+
+      - name: Score content intelligence
+        run: |
+          python .github/workflow/content_intelligence.py \
+            --package ./workspace/production_package.json \
+            --output ./workspace/content_intelligence.json
+
+      - name: Monetization safety gate
+        run: |
+          python .github/workflow/monetization_gate.py \
+            --package ./workspace/production_package.json \
+            --intelligence ./workspace/content_intelligence.json
+
       - name: Debug production workspace
         run: |
           pwd
