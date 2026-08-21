@@ -2,16 +2,19 @@ import os, json, re, urllib.request
 from pathlib import Path
 import feedparser
 
-# Always write generated artifacts to the repository root/workspace.
-# GitHub Actions runs this script from the repository root, while __file__
-# points into .github/workflow/. Using __file__.parent here incorrectly
-# creates .github/workflow/workspace/, which downstream steps cannot find.
+# GitHub Actions runs this script from the repository root.
+# Keep generated artifacts in <repo>/workspace/.
 ROOT = Path.cwd()
 WORK = ROOT / "workspace"
 WORK.mkdir(parents=True, exist_ok=True)
 
 MODE = os.getenv("UNCOMMONAI_MODE", "research").lower()
 APPROVED_TOPIC = os.getenv("APPROVED_TOPIC", "").strip()
+
+def safe_text(value):
+    """Normalize a value for validation and on-screen use."""
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
@@ -219,44 +222,275 @@ def parse_json(text):
 
 def build_package(topic):
     prompt = f"""
-You are the lead producer for the faceless YouTube channel uncommonAI.
+You are the senior editorial producer for the faceless YouTube channel uncommonAI.
 
-Audience: curious professionals, creators and tech enthusiasts who want important
-AI developments explained clearly without needing an engineering background.
+Your job is NOT to make a generic AI-news slideshow. Create one distinctive,
+viewer-first story that could compete with a strong technology creator.
 
-Approved concept:
+APPROVED TOPIC:
 {topic}
 
-Create an ORIGINAL 7-10 minute YouTube package.
+Create exactly ONE original 7-10 minute YouTube video package.
 
-Rules:
-- Do not rewrite a source article or another creator.
-- Give a strong curiosity hook in the first 15 seconds.
-- Explain why the development matters to normal people/creators/businesses.
-- Simple language first, technical detail second.
-- Never invent statistics, quotes, benchmarks or capabilities.
-- Separate verified facts from interpretation.
-- Include source URLs.
-- Avoid generic AI-news roundup structure.
-- Create 8 scenes and 3 distinct Shorts.
-- Return JSON only.
+==================== ORIGINALITY ====================
+Build a clear original thesis around the approved topic.
+
+Do NOT:
+- rewrite a source article;
+- paraphrase another creator's framing;
+- produce a generic "AI is changing everything" story;
+- use filler transitions;
+- invent statistics, quotes, benchmarks, tests, demos or capabilities.
+
+DO:
+- explain WHY the topic matters;
+- add interpretation and practical implications;
+- distinguish verified facts from analysis;
+- identify a limitation, trade-off, failure mode or surprising consequence;
+- use concrete technologies, workflows, users, businesses or mechanisms where supported;
+- make the conclusion specific and useful.
+
+The viewer should finish with at least one insight they would not get
+from simply reading the source headline.
+
+==================== STORY ====================
+Use this 8-scene editorial arc:
+
+1. Hook — surprising question, tension, failure, result or implication.
+2. Context — why the viewer should care now.
+3. Evidence — what is actually known or demonstrated.
+4. Mechanism — explain how/why it works.
+5. Real-world implication — what changes for users/businesses/developers.
+6. Limitation or failure mode — what the hype gets wrong.
+7. Practical takeaway — what the viewer should do or watch next.
+8. Memorable conclusion — one strong final idea.
+
+Avoid:
+- "In today's video"
+- "Let's dive in"
+- generic AI hype
+- repetitive scene introductions
+- unsupported claims
+- copied source headlines
+
+==================== VISUAL STORYTELLING ====================
+Create EXACTLY 8 scenes.
+
+Every scene MUST contain:
+- narration
+- visual_prompt
+- key_phrase: 3-8 words
+- visual_type
+
+Allowed visual_type values:
+- hook
+- comparison
+- process
+- timeline
+- evidence
+- warning
+- takeaway
+
+The visual_type must describe the INFORMATION RELATIONSHIP, not merely a
+color, style or background.
+
+Examples:
+- comparison = A vs B, old vs new, human vs AI, before vs after
+- process = sequential workflow or mechanism
+- timeline = progression across time/stages
+- evidence = source/claim/finding relationship
+- warning = failure, risk, limitation or breakdown
+- takeaway = final decision, recommendation or conclusion
+- hook = visually striking opening concept
+
+CRITICAL VISUAL DIVERSITY RULES:
+- Use at least 5 DIFFERENT visual_type values across the 8 scenes.
+- Never use the same visual_type in adjacent scenes.
+- Do not make eight versions of a dark text card.
+- Do not repeat the same diagram composition.
+- Do not use generic INPUT -> PROCESS -> OUTPUT unless that relationship
+  is genuinely the point of the scene.
+- Prefer diagrams, comparisons, timelines, evidence chains, failure paths,
+  decision structures and concrete workflows.
+- Each visual_prompt must describe meaningful labels/elements from THAT scene.
+- Never invent numerical chart values. If there is no real data, use a
+  conceptual visualization instead of a fake graph.
+
+The visuals must help explain the narration, not merely decorate it.
+
+==================== TITLE ====================
+Create 3 possible titles internally and return the strongest one.
+
+The chosen title MUST:
+- clearly describe the actual story;
+- contain the important topic/entity;
+- create curiosity without clickbait;
+- normally be 45-75 characters;
+- never be "uncommonAI" or a generic AI title.
+
+Also create:
+- thumbnail_text: 2-6 words;
+- thumbnail_prompt: one strong visual concept, not a text-heavy slide.
+
+==================== SHORTS ====================
+Create exactly 3 genuinely different Shorts.
+
+Each Short MUST:
+- be 25-55 seconds;
+- have a different hook;
+- focus on a different insight;
+- be self-contained;
+- end with a useful takeaway;
+- NOT simply cut down scenes 1/2/3;
+- contain no unsupported claims.
+
+Each Short needs:
+- title
+- hook
+- script
+- visual_prompt
+
+==================== SOURCES ====================
+Include original source URLs in "sources".
+Never invent URLs. If a source URL is unavailable, do not fabricate one.
+
+==================== JSON ====================
+Return VALID JSON ONLY. No markdown fences. No comments.
+Every object key MUST use double quotes.
 
 Schema:
 {{
-"title_options": ["...", "...", "..."],
-"chosen_title": "...",
-"hook": "...",
-"description": "...",
-"tags": ["..."],
-"thumbnail_prompt": "...",
-"script": "...",
-"scenes": [{{"narration":"...", "visual_prompt":"..."}}],
-"shorts": [{{"title":"...", "script":"...", "visual_prompt":"..."}}],
-"sources": ["https://..."]
+  "title_options": ["...", "...", "..."],
+  "chosen_title": "...",
+  "title": "...",
+  "thumbnail_text": "...",
+  "description": "...",
+  "tags": ["..."],
+  "thumbnail_prompt": "...",
+  "script": "complete long-form narration",
+  "scenes": [
+    {{
+      "narration": "...",
+      "visual_prompt": "...",
+      "key_phrase": "...",
+      "visual_type": "hook"
+    }}
+  ],
+  "shorts": [
+    {{
+      "title": "...",
+      "hook": "...",
+      "script": "...",
+      "visual_prompt": "..."
+    }}
+  ],
+  "sources": ["https://..."]
 }}
 """
+
     package = parse_json(gemini_generate(prompt))
-    (WORK / "package.json").write_text(json.dumps(package, indent=2), encoding="utf-8")
+
+    if not isinstance(package, dict):
+        raise SystemExit("Gemini production response is not a JSON object.")
+
+    # Normalize title fields for compatibility with the existing renderers.
+    title = safe_text(package.get("chosen_title") or package.get("title"))
+    if not title:
+        raise SystemExit("Gemini did not generate a specific video title.")
+
+    package["title"] = title
+    package["chosen_title"] = title
+
+    scenes = package.get("scenes") or []
+    shorts = package.get("shorts") or []
+
+    if len(scenes) != 8:
+        raise SystemExit(f"Expected 8 scenes, found {len(scenes)}")
+    if len(shorts) != 3:
+        raise SystemExit(f"Expected 3 Shorts, found {len(shorts)}")
+
+    allowed_visual_types = {
+        "hook",
+        "comparison",
+        "process",
+        "timeline",
+        "evidence",
+        "warning",
+        "takeaway",
+    }
+
+    # Normalize missing key phrases instead of failing an otherwise valid
+    # Gemini response.
+    for i, scene in enumerate(scenes, 1):
+        if not safe_text(scene.get("narration")):
+            raise SystemExit(f"Scene {i} has no narration.")
+
+        key_phrase = safe_text(scene.get("key_phrase"))
+        if not key_phrase:
+            source = (
+                scene.get("visual_prompt")
+                or scene.get("narration")
+                or ""
+            )
+            words = safe_text(source).split()
+            key_phrase = " ".join(words[:6]).strip(" ,.;:!?")
+            if not key_phrase:
+                key_phrase = f"Key insight {i}"
+            scene["key_phrase"] = key_phrase
+            print(
+                f"Scene {i}: missing key_phrase; generated fallback: "
+                f"{key_phrase}"
+            )
+
+        visual_type = safe_text(scene.get("visual_type")).lower()
+        if visual_type not in allowed_visual_types:
+            raise SystemExit(
+                f"Scene {i} has invalid visual_type: {visual_type!r}. "
+                f"Allowed: {sorted(allowed_visual_types)}"
+            )
+
+        if not safe_text(scene.get("visual_prompt")):
+            raise SystemExit(f"Scene {i} has no visual_prompt.")
+
+        scene["visual_type"] = visual_type
+
+    visual_types = [scene["visual_type"] for scene in scenes]
+    unique_visual_types = len(set(visual_types))
+
+    if unique_visual_types < 5:
+        raise SystemExit(
+            "Insufficient visual diversity: "
+            f"{unique_visual_types} unique visual types across 8 scenes. "
+            "Gemini must use at least 5 different visual types."
+        )
+
+    for i in range(1, len(visual_types)):
+        if visual_types[i] == visual_types[i - 1]:
+            raise SystemExit(
+                f"Adjacent visual_type repetition at scenes {i} and {i + 1}: "
+                f"{visual_types[i]!r}"
+            )
+
+    phrases = [safe_text(s.get("key_phrase")).lower() for s in scenes]
+    if len(set(phrases)) < 6:
+        raise SystemExit(
+            "Scene key phrases are too repetitive; at least 6 unique "
+            "key phrases are required."
+        )
+
+    package["scenes"] = scenes
+    package["shorts"] = shorts
+
+    (WORK / "package.json").write_text(
+        json.dumps(package, indent=2),
+        encoding="utf-8",
+    )
+
+    print(
+        "Production package generated: "
+        f"{len(scenes)} scenes, {unique_visual_types} visual types."
+    )
+
     return package
 
 def quality_gate(package):
