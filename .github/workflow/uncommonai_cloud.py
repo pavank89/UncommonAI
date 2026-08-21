@@ -2,7 +2,7 @@ import os, json, re, urllib.request
 from pathlib import Path
 import feedparser
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parent
 WORK = ROOT / "workspace"
 WORK.mkdir(exist_ok=True)
 
@@ -217,115 +217,25 @@ def build_package(topic):
     prompt = f"""
 You are the lead producer for the faceless YouTube channel uncommonAI.
 
-Audience:
-Curious professionals, QA engineers, developers, creators, and tech enthusiasts
-who want practical AI explained clearly without needing an advanced engineering
-background.
+Audience: curious professionals, creators and tech enthusiasts who want important
+AI developments explained clearly without needing an engineering background.
 
-APPROVED VIDEO CONCEPT:
+Approved concept:
 {topic}
 
 Create an ORIGINAL 7-10 minute YouTube package.
 
-IMPORTANT EDITORIAL STANDARD:
-This must feel like a real technical experiment/report, NOT a generic AI-news
-video.
-
-The central story must be:
-1. A realistic QA workflow.
-2. What an AI agent was asked to automate.
-3. What the agent successfully automated.
-4. What the agent got wrong, misunderstood, or broke.
-5. What a human QA engineer still had to do.
-6. What this tells us about the real limits of AI agents.
-
-Do NOT pretend that an experiment was personally performed unless the supplied
-topic or source material explicitly establishes that it was performed.
-
-If the available evidence does not establish a real-world personal experiment,
-frame claims carefully as:
-- "In a representative QA workflow..."
-- "A practical test would..."
-- "Existing agent capabilities suggest..."
-rather than falsely claiming first-hand results.
-
-EVIDENCE REQUIREMENTS:
-- Prefer specific, verifiable technologies, tools, frameworks, APIs, papers,
-  documentation, or primary announcements.
-- Examples may include real agent frameworks, browser/computer-use agents,
-  coding agents, test-generation systems, CI/CD integrations, or QA automation
-  approaches ONLY when they are actually relevant and supported by sources.
-- Do not invent tool capabilities.
-- Do not invent benchmarks, percentages, test results, quotes, customer stories,
-  or personal experiences.
-- Do not present hypothetical capabilities as current facts.
-- Each important factual claim should be traceable to a source.
-- Prefer direct documentation, research papers, GitHub repositories, or primary
-  company announcements over generic homepages.
+Rules:
+- Do not rewrite a source article or another creator.
+- Give a strong curiosity hook in the first 15 seconds.
+- Explain why the development matters to normal people/creators/businesses.
+- Simple language first, technical detail second.
+- Never invent statistics, quotes, benchmarks or capabilities.
+- Separate verified facts from interpretation.
 - Include source URLs.
-
-ORIGINALITY:
-- Do not rewrite or summarize one article.
-- Do not produce a generic "Top AI tools" list.
-- Do not use recycled AI-news language.
-- Build a coherent argument around the QA workflow.
-- Include original explanation, comparison, reasoning, and practical implications.
-- Distinguish clearly between verified facts and your analysis.
-
-VIDEO STRUCTURE:
-Use a strong narrative rather than a news roundup.
-
-Suggested structure:
-Scene 1 — Hook: the surprising QA-agent result.
-Scene 2 — The QA task and why it is difficult.
-Scene 3 — What the agent was asked to automate.
-Scene 4 — What the agent can actually accomplish.
-Scene 5 — Where the agent fails or makes mistakes.
-Scene 6 — Why those failures happen.
-Scene 7 — What still requires a human QA engineer.
-Scene 8 — Practical conclusion: where agents help today and where they should
-not be trusted blindly.
-
-The first 15 seconds must create curiosity without using generic hooks such as
-"If you're still using AI just to write emails."
-
-Use concrete situations and consequences.
-
-TECHNICAL QUALITY:
-Explain technical concepts in simple language first, then add technical detail.
-Where useful, explain concepts such as:
-- test planning
-- test generation
-- browser/API interaction
-- assertions
-- debugging
-- flaky tests
-- environment setup
-- CI/CD
-- regression testing
-- agent memory/state
-- tool calling
-- human verification
-
-Only include concepts relevant to the actual story.
-
-YOUTUBE/YPP SAFETY:
-- No copied scripts.
-- No article-by-article compilation.
-- No repetitive filler.
-- No unsupported claims.
-- No fake personal experience.
-- No fabricated sources.
-- No misleading title or thumbnail.
-- The final package must provide meaningful original explanation and analysis.
-
-Create:
-- 8 scenes.
-- 3 genuinely different Shorts.
-- Each Short must have a distinct takeaway rather than simply cutting the
-  main script into three pieces.
-
-Return JSON ONLY.
+- Avoid generic AI-news roundup structure.
+- Create 8 scenes and 3 distinct Shorts.
+- Return JSON only.
 
 Schema:
 {{
@@ -336,37 +246,13 @@ Schema:
 "tags": ["..."],
 "thumbnail_prompt": "...",
 "script": "...",
-"scenes": [
-  {{
-    "narration": "...",
-    "visual_prompt": "..."
-  }}
-],
-"shorts": [
-  {{
-    "title": "...",
-    "script": "...",
-    "visual_prompt": "..."
-  }}
-],
+"scenes": [{{"narration":"...", "visual_prompt":"..."}}],
+"shorts": [{{"title":"...", "script":"...", "visual_prompt":"..."}}],
 "sources": ["https://..."]
 }}
-
-FINAL CHECK BEFORE RETURNING JSON:
-- Is the story concrete rather than generic?
-- Are the important claims supported?
-- Are the tools/frameworks real and relevant?
-- Have you avoided invented experiments and benchmarks?
-- Does the video explain what agents can and cannot do in QA?
-- Does each scene add new information?
-- Are the three Shorts genuinely different?
-- Would this provide meaningful original commentary rather than a compilation?
 """
     package = parse_json(gemini_generate(prompt))
-    (WORK / "package.json").write_text(
-        json.dumps(package, indent=2),
-        encoding="utf-8"
-    )
+    (WORK / "package.json").write_text(json.dumps(package, indent=2), encoding="utf-8")
     return package
 
 def quality_gate(package):
