@@ -82,7 +82,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg
           python -m pip install --upgrade pip
-          python -m pip install feedparser pillow edge-tts
+          python -m pip install feedparser pillow "edge-tts==7.2.0"
 
       - name: Extract approved topic
         env:
