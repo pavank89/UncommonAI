@@ -301,69 +301,109 @@ Malformed JSON:
 
 def build_package(topic):
     prompt = f"""
-You are the lead producer for the faceless YouTube channel uncommonAI.
+You are the senior editorial producer for the faceless YouTube channel uncommonAI.
 
-GOAL:
-Create a high-retention, original, evidence-aware AI/technology video that
-feels like a human editorial product, not an automated news slideshow.
-
-Audience:
-Curious professionals, creators and tech enthusiasts who want to understand
-important AI developments without needing an engineering background.
+Your job is NOT to make a generic AI-news slideshow. Create one distinctive,
+viewer-first story that could compete with a strong technology creator.
 
 APPROVED TOPIC:
 {topic}
 
-Create one ORIGINAL 7-10 minute YouTube package specifically about the
-approved topic.
+Create exactly ONE original 7-10 minute YouTube video package about this topic.
 
-EDITORIAL QUALITY:
-- Open with a concrete tension, surprising implication, or question in the
-  first 10-15 seconds.
-- Avoid "In today's video", "Let's dive in", and generic AI-news openings.
-- Build a clear narrative: hook -> context -> evidence -> what changed ->
-  implications -> limitations -> practical takeaway.
-- Prefer concrete examples and mechanisms over hype.
-- Clearly distinguish verified facts from interpretation.
-- Never invent statistics, quotes, benchmarks, product capabilities or demos.
-- Do not copy source headlines or another creator's framing.
-- Use original commentary throughout.
-- End with one memorable conclusion and a reason to watch the next video.
+==================== TITLE ====================
+Create 5 possible YouTube titles internally, then return ONLY the strongest one.
+The returned title MUST:
+- clearly describe the actual story;
+- contain the important topic/entity;
+- create curiosity without clickbait;
+- be specific enough that a viewer knows why to click;
+- NOT be "uncommonAI" or a generic title;
+- normally be 45-75 characters.
 
-LONG-FORM VISUAL DESIGN:
-Create exactly 8 scenes. Each scene must have:
-- "narration": the spoken narration for that scene
-- "visual_prompt": a concise description of what an eventual visual should show
-- "key_phrase": 3-8 words that can be displayed prominently on screen
-- "visual_type": one of: "hook", "comparison", "process", "timeline",
-  "evidence", "warning", "takeaway"
+Also return:
+- "thumbnail_text": 2-6 powerful words for the thumbnail;
+- "thumbnail_prompt": a concrete thumbnail concept, not a text-heavy slide.
+The thumbnail should communicate one idea visually and use very little text.
 
-SHORTS:
-Create exactly 3 Shorts from different parts of the same story.
-Each Short must:
-- be 25-55 seconds;
-- have a different hook and angle;
-- deliver one self-contained insight;
-- avoid simply summarizing the long video;
-- have a title/hook that creates curiosity without clickbait;
-- end with a useful conclusion;
-- be suitable for vertical 9:16;
-- contain no unsupported claims.
+==================== STORY ====================
+Use this structure:
+1. Hook: a surprising question, tension, failure, result, or implication.
+2. Context: why the viewer should care now.
+3. Evidence: what is actually known or demonstrated.
+4. Mechanism: explain how/why it works in plain language.
+5. Real-world implication: what changes for users/businesses/developers.
+6. Limitation or failure mode: what the hype gets wrong.
+7. Practical takeaway: what the viewer should do or watch next.
+8. Memorable conclusion.
 
-SOURCE QUALITY:
-- Include the original source URLs in "sources".
-- Use sources relevant to the approved topic.
-- Do not fabricate URLs.
+Avoid:
+- "In today's video"
+- "Let's dive in"
+- generic AI hype
+- repetitive scene introductions
+- unsupported statistics
+- invented tests, quotes, benchmarks, demos or capabilities
+- copying source headlines or another creator's framing
 
-Return valid JSON only.
+Make the narration sound like an informed human analyst explaining something
+interesting to a smart non-specialist.
+
+==================== ORIGINALITY ====================
+The video must contain meaningful original synthesis and commentary.
+If the approved topic is based on a news item, explain WHY it matters and what
+it means rather than simply rewriting the article.
+Clearly distinguish verified facts from interpretation.
+If a claim cannot be supported by the supplied/retrievable sources, phrase it
+carefully or omit it.
+
+==================== VISUALS ====================
+Create exactly 8 scenes.
+Every scene must have:
+- narration
+- visual_prompt: a concise, concrete visual concept
+- key_phrase: 3-8 words for on-screen emphasis
+- visual_type: exactly one of:
+  hook, comparison, process, timeline, evidence, warning, takeaway
+
+IMPORTANT: The 8 scenes MUST NOT look interchangeable.
+Use different visual concepts and compositions. Do not describe eight versions
+of the same dark text card.
+
+==================== SHORTS ====================
+Create exactly 3 Shorts.
+They must be genuinely different from one another:
+- 25-55 seconds each;
+- different hook;
+- different insight;
+- self-contained;
+- useful conclusion;
+- not simply scene 1/2/3 cut-downs;
+- no unsupported claims.
+
+Each Short needs:
+- title
+- script
+- visual_prompt
+- hook
+
+==================== SOURCES ====================
+Include original source URLs in "sources".
+Never invent URLs. If a source URL is unavailable, do not fabricate one.
+
+==================== JSON ====================
+Return VALID JSON ONLY. No markdown fences. No comments.
+Every object key MUST use double quotes.
 
 Schema:
 {{
-  "title": "...",
-  "description": "...",
+  "title": "specific viewer-first title",
+  "chosen_title": "same exact title as title",
+  "thumbnail_text": "2-6 words",
+  "description": "compelling YouTube description",
   "tags": ["..."],
   "thumbnail_prompt": "...",
-  "script": "...",
+  "script": "complete long-form narration",
   "scenes": [
     {{
       "narration": "...",
@@ -375,6 +415,7 @@ Schema:
   "shorts": [
     {{
       "title": "...",
+      "hook": "...",
       "script": "...",
       "visual_prompt": "..."
     }}
@@ -382,48 +423,86 @@ Schema:
   "sources": ["https://..."]
 }}
 """
+
     package = gemini_generate(prompt)
 
     if not isinstance(package, dict):
         raise SystemExit("Gemini production response is not a JSON object.")
+
+    # Normalize title fields for compatibility with older renderers/uploaders.
+    title = safe_text(package.get("title") or package.get("chosen_title"))
+    if not title or title.lower() == "uncommonai":
+        raise SystemExit("Gemini did not generate a specific video title.")
+    package["title"] = title
+    package["chosen_title"] = title
+
+    thumbnail_text = safe_text(package.get("thumbnail_text"))
+    if not thumbnail_text:
+        raise SystemExit("Gemini did not generate thumbnail_text.")
+    package["thumbnail_text"] = thumbnail_text
 
     scenes = package.get("scenes", [])
     shorts = package.get("shorts", [])
 
     if len(scenes) != 8:
         raise SystemExit(f"Expected 8 scenes, found {len(scenes)}")
-
     if len(shorts) != 3:
         raise SystemExit(f"Expected 3 Shorts, found {len(shorts)}")
+
+    allowed_visual_types = {
+        "hook", "comparison", "process", "timeline",
+        "evidence", "warning", "takeaway"
+    }
 
     for i, scene in enumerate(scenes, 1):
         if not safe_text(scene.get("narration")):
             raise SystemExit(f"Scene {i} has no narration.")
         if not safe_text(scene.get("key_phrase")):
             raise SystemExit(f"Scene {i} has no key_phrase.")
-        if scene.get("visual_type") not in {
-            "hook", "comparison", "process", "timeline",
-            "evidence", "warning", "takeaway"
-        }:
+        if scene.get("visual_type") not in allowed_visual_types:
             raise SystemExit(f"Scene {i} has invalid visual_type.")
+        if not safe_text(scene.get("visual_prompt")):
+            raise SystemExit(f"Scene {i} has no visual_prompt.")
+
+    # Reject obviously repetitive scene design before rendering.
+    phrases = [safe_text(s.get("key_phrase")).lower() for s in scenes]
+    if len(set(phrases)) < 6:
+        raise SystemExit("Scene key phrases are too repetitive.")
 
     for i, short in enumerate(shorts, 1):
         if not safe_text(short.get("title")):
             raise SystemExit(f"Short {i} has no title.")
         if not safe_text(short.get("script")):
             raise SystemExit(f"Short {i} has no script.")
+        if not safe_text(short.get("hook")):
+            raise SystemExit(f"Short {i} has no hook.")
+        if not safe_text(short.get("visual_prompt")):
+            raise SystemExit(f"Short {i} has no visual_prompt.")
+
+    short_titles = [safe_text(x.get("title")).lower() for x in shorts]
+    if len(set(short_titles)) != 3:
+        raise SystemExit("Short titles are not sufficiently distinct.")
 
     (WORK / "production_package.json").write_text(
-        json.dumps(package, indent=2), encoding="utf-8"
+        json.dumps(package, indent=2, ensure_ascii=False), encoding="utf-8"
     )
-    # Keep the older package filename too for compatibility with any tooling
-    # that still expects it.
     (WORK / "package.json").write_text(
-        json.dumps(package, indent=2), encoding="utf-8"
+        json.dumps(package, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    # A small human-review file makes the next production easy to inspect.
+    review = {
+        "title": title,
+        "thumbnail_text": thumbnail_text,
+        "thumbnail_prompt": package.get("thumbnail_prompt", ""),
+        "short_titles": [x.get("title") for x in shorts],
+        "sources": package.get("sources", []),
+    }
+    (WORK / "editorial_review.json").write_text(
+        json.dumps(review, indent=2, ensure_ascii=False), encoding="utf-8"
     )
 
     return package
-
 
 def quality_gate(package):
     # The quality gate uses the same Gemini credential as production.
