@@ -261,80 +261,113 @@ def normalize_long_form_script(package):
 
 def expand_short_long_form(package, topic, current_words):
     """
-    Ask Gemini to expand ONLY the existing scene narration.
-
-    This is a repair path, not a second story generation path. It preserves
-    the approved topic, scene structure, visual prompts and labels.
+    Iteratively expand the existing 8-scene narration until it clears the
+    production minimum. This is intentionally a repair loop rather than a
+    second story-generation pass.
     """
     scenes = package.get("scenes") or []
 
-    prompt = f"""
+    for attempt in range(1, 4):
+        current_scene_words = [
+            len(safe_text(scene.get("narration")).split())
+            for scene in scenes
+        ]
+
+        prompt = f"""
 You are repairing an already-approved long-form YouTube production package.
 
 APPROVED TOPIC:
 {topic}
 
-CURRENT NARRATION WORD COUNT:
-{current_words}
+CURRENT TOTAL WORD COUNT:
+{sum(current_scene_words)}
 
-The current package is too short for a 7-10 minute documentary-style video.
+CURRENT WORD COUNTS BY SCENE:
+{current_scene_words}
 
-Return VALID JSON ONLY with this exact structure:
+This is a 7-10 minute technology documentary. The current narration is too
+short and MUST be expanded.
+
+Return VALID JSON ONLY:
 {{
   "scenes": [
-    {{
-      "narration": "..."
-    }}
+    {{"narration": "..."}},
+    {{"narration": "..."}},
+    {{"narration": "..."}},
+    {{"narration": "..."}},
+    {{"narration": "..."}},
+    {{"narration": "..."}},
+    {{"narration": "..."}},
+    {{"narration": "..."}}
   ]
 }}
 
-There must be exactly 8 scene objects, in the same order.
+NON-NEGOTIABLE LENGTH REQUIREMENTS:
+- Exactly 8 scenes.
+- TOTAL narration: 1,250-1,500 words.
+- EACH scene: at least 145 words.
+- Aim for 155-185 words per scene.
+- Do not merely add adjectives or repeat sentences.
+- Every scene must add useful spoken explanation.
 
-Rules:
-- Preserve the existing story, thesis, facts, evidence and scene order.
-- Expand the narration to a total of 1,200-1,500 words.
-- Target roughly 150-190 words per scene.
-- Do NOT invent statistics, quotes, benchmarks, demonstrations, capabilities,
-  sources or facts.
-- Add useful explanation, mechanism, context, implications, limitations and
-  interpretation supported by the existing package.
-- Do not add generic filler such as "in today's video", "let's dive in",
-  "as we all know", or repetitive conclusions.
-- Keep the narration natural for spoken documentary delivery.
-- Do not change visual_prompt, visual_type, key_phrase or visual_labels.
+CONTENT REQUIREMENTS:
+- Preserve the existing thesis, facts, evidence, topic and story order.
+- Expand with mechanism, context, concrete implications, limitations,
+  interpretation and transitions where supported by the existing story.
+- Do NOT invent statistics, quotes, benchmarks, tests, demonstrations,
+  capabilities, companies, events or sources.
+- Do NOT use generic filler such as "in today's video", "let's dive in",
+  "as we all know", "the future is here", or repetitive conclusions.
+- Make it sound like an intelligent human technology documentary narrator.
+- Do not modify any visual metadata; return narration only.
 
 CURRENT SCENES:
 {json.dumps(
-    [{"narration": safe_text(s.get("narration"))} for s in scenes],
+    [{"scene": i + 1, "narration": safe_text(s.get("narration"))}
+     for i, s in enumerate(scenes)],
     indent=2
 )}
 """
 
-    repaired = parse_json(gemini_generate(prompt))
+        repaired = parse_json(gemini_generate(prompt))
+        repaired_scenes = repaired.get("scenes") if isinstance(repaired, dict) else None
 
-    repaired_scenes = repaired.get("scenes") if isinstance(repaired, dict) else None
-    if not isinstance(repaired_scenes, list) or len(repaired_scenes) != 8:
-        raise SystemExit(
-            "Long-form repair returned an invalid scene structure."
-        )
+        if not isinstance(repaired_scenes, list) or len(repaired_scenes) != 8:
+            print(f"Long-form repair attempt {attempt}: invalid scene structure.")
+            continue
 
-    for i, repaired_scene in enumerate(repaired_scenes):
-        narration = safe_text(
-            repaired_scene.get("narration") if isinstance(repaired_scene, dict)
-            else ""
-        )
-        if not narration:
-            raise SystemExit(
-                f"Long-form repair returned empty narration for scene {i + 1}."
+        valid = True
+        for i, repaired_scene in enumerate(repaired_scenes):
+            narration = safe_text(
+                repaired_scene.get("narration")
+                if isinstance(repaired_scene, dict) else ""
             )
-        scenes[i]["narration"] = narration
+            if not narration:
+                valid = False
+                print(f"Long-form repair attempt {attempt}: scene {i+1} is empty.")
+                break
+            scenes[i]["narration"] = narration
 
-    package["scenes"] = scenes
-    package["script"] = "\n\n".join(
-        safe_text(scene["narration"]) for scene in scenes
-    )
+        if not valid:
+            continue
+
+        package["scenes"] = scenes
+        package["script"] = "\n\n".join(
+            safe_text(scene["narration"]) for scene in scenes
+        )
+
+        total = long_form_word_count(package)
+        counts = [len(safe_text(s["narration"]).split()) for s in scenes]
+        print(
+            f"Long-form repair attempt {attempt}: "
+            f"{total} total words; per-scene={counts}"
+        )
+
+        if total >= 1200 and min(counts) >= 145:
+            return total
 
     return long_form_word_count(package)
+
 
 
 def build_package(topic):
@@ -725,9 +758,14 @@ Schema:
         print(f"Long-form narration after repair: {word_count}")
 
     if word_count < 1200:
+        scene_counts = [
+            len(safe_text(scene.get("narration")).split())
+            for scene in package.get("scenes", [])
+        ]
         raise SystemExit(
-            "Long-form narration is still too short after repair: "
-            f"{word_count} words. Minimum is 1200."
+            "Long-form narration is still too short after 3 repair attempts: "
+            f"{word_count} words. Minimum is 1200. "
+            f"Scene word counts: {scene_counts}"
         )
 
     if word_count > 1800:
