@@ -105,9 +105,17 @@ jobs:
               topic = None
 
               for pattern in patterns:
-                  match = re.search(pattern, body, re.IGNORECASE | re.DOTALL)
+                  match = re.search(
+                      pattern,
+                      body,
+                      re.IGNORECASE | re.DOTALL
+                  )
                   if match:
-                      topic = re.sub(r"\s+", " ", match.group(1)).strip()
+                      topic = re.sub(
+                          r"\s+",
+                          " ",
+                          match.group(1)
+                      ).strip()
                       break
 
           if not topic:
@@ -176,11 +184,14 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-      - name: Upload long-form video to YouTube
-        env:
-          YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
-        run: |
-          python .github/workflow/youtube_uploader.py
+      # ============================================================
+      # YOUTUBE LONG-FORM UPLOAD DISABLED FOR V7 TEST
+      # ============================================================
+      # - name: Upload long-form video to YouTube
+      #   env:
+      #     YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+      #   run: |
+      #     python .github/workflow/youtube_uploader.py
 
       - name: Render 3 Shorts
         env:
@@ -209,11 +220,14 @@ jobs:
               -of default=noprint_wrappers=1 "$f"
           done
 
-      - name: Upload 3 Shorts to YouTube
-        env:
-          YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
-        run: |
-          python .github/workflow/youtube_shorts_uploader.py
+      # ============================================================
+      # YOUTUBE SHORTS UPLOAD DISABLED FOR V7 TEST
+      # ============================================================
+      # - name: Upload 3 Shorts to YouTube
+      #   env:
+      #     YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+      #   run: |
+      #     python .github/workflow/youtube_shorts_uploader.py
 
       - name: Save long-form production files
         uses: actions/upload-artifact@v4
@@ -236,7 +250,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue comment ${{ github.event.issue.number }} --body "✅ Production package, long-form MP4, 3 Shorts, and YouTube uploads are complete."
+          gh issue comment ${{ github.event.issue.number }} --body "✅ V7 production package, long-form MP4, and 3 Shorts generated and validated. YouTube uploads are disabled for this review run."
 
   final_approval:
     if: |
@@ -251,4 +265,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue comment ${{ github.event.issue.number }} --body "PUBLISH approval was received. The current workflow publishes during the production run; this job is retained for compatibility."
+          gh issue comment ${{ github.event.issue.number }} --body "PUBLISH approval was received. YouTube uploads are currently disabled in this review workflow."
