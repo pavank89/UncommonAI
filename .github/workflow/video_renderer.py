@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import math
 import os
 import random
 import re
@@ -415,160 +416,358 @@ def draw_neural_network(draw, area, p, seed, density=24):
     return nodes
 
 
-def draw_visual(draw, kind, area, p, scene=None, seed=1):
-    """
-    Premium documentary visual language.
 
-    Design rules:
-      - no rigid multi-card grids
-      - one dominant accent on a dark atmospheric field
-      - organic network geometry
-      - frosted-glass callouts
-      - layered depth and restrained typography
-      - visual_prompt/labels drive the content
-    """
-    from PIL import ImageFont, ImageFilter, Image
-    import math
-
-    x, y, w, h = area
-    scene = scene or {}
-    labels = visual_keywords(scene, 5)
-    title_font = ImageFont.truetype(BOLD, 28)
-    label_font = ImageFont.truetype(BOLD, 22)
-    body_font = ImageFont.truetype(FONT, 19)
-
-    # Atmospheric background texture.
+def draw_particles(draw, center, radius, p, seed, count=90):
+    """Soft, depth-layered particles for hero/cinematic scenes."""
     rng = random.Random(seed)
-    for _ in range(90):
-        px = rng.uniform(x, x+w)
-        py = rng.uniform(y, y+h)
-        r = rng.choice([1, 1, 2, 3])
+    cx, cy = center
+    for i in range(count):
+        angle = rng.random() * 6.283185
+        rr = radius * (rng.random() ** 0.55)
+        px = cx + math.cos(angle) * rr
+        py = cy + math.sin(angle) * rr * 0.62
+        size = rng.choice([1, 1, 2, 2, 3, 4])
+        alpha = rng.randint(35, 155)
         draw.ellipse(
-            (px-r, py-r, px+r, py+r),
-            fill=(*p["accent"], rng.randint(8, 24))
+            (px-size, py-size, px+size, py+size),
+            fill=(*p["accent"], alpha)
         )
 
-    # Large soft focus node behind the primary subject.
-    cx, cy = x + w*0.52, y + h*0.49
-    draw_glow(draw, (cx, cy), min(w, h)*0.26, p["accent"], layers=8)
 
-    # Organic network is the common visual grammar across all scene types.
-    nodes = draw_neural_network(
-        draw,
-        (x+80, y+40, w-160, h-80),
-        p,
-        seed=seed * 97 + len(kind),
-        density=26 if kind in {"architecture", "flow", "metrics"} else 20,
-    )
+def draw_hero(draw, area, p, labels, seed):
+    x, y, w, h = area
+    cx, cy = x + w*0.56, y + h*0.50
+    draw_particles(draw, (cx, cy), min(w, h)*0.47, p, seed, 125)
 
-    # Central hero object: luminous "AI execution core".
-    core_r = 86 if kind not in {"risk", "quote"} else 70
-    for rr in range(core_r+36, core_r, -8):
-        alpha = int(12 + 38 * (core_r+36-rr) / 36)
+    # Large cinematic execution core.
+    for rr in range(155, 55, -9):
+        alpha = max(8, int(70 * (155-rr)/100))
         draw.ellipse(
             (cx-rr, cy-rr, cx+rr, cy+rr),
             outline=(*p["accent"], alpha),
             width=2
         )
-    draw.ellipse(
-        (cx-core_r, cy-core_r, cx+core_r, cy+core_r),
-        fill=(9, 12, 18, 220),
-        outline=(*p["accent"], 230),
-        width=3
-    )
 
-    # Active pulse ring and directional execution trace.
-    phase = (seed % 7) * 0.22
-    for i in range(3):
-        rr = core_r + 20 + i*18
+    # Fiber-like arcs instead of a diagram.
+    for i in range(12):
+        offset = (i-6) * 13
         draw.arc(
-            (cx-rr, cy-rr, cx+rr, cy+rr),
-            start=int(25 + phase*90 + i*65),
-            end=int(105 + phase*90 + i*65),
-            fill=(*p["accent"], 165-i*25),
-            width=4 if i == 0 else 2,
-        )
-
-    core_text = {
-        "flow": "EXECUTE",
-        "architecture": "SYSTEM",
-        "metrics": "SIGNAL",
-        "risk": "RISK",
-        "compare": "SHIFT",
-        "timeline": "EVOLVE",
-        "evidence": "EVIDENCE",
-        "decision": "DECIDE",
-        "journey": "ADAPT",
-        "steps": "PROCESS",
-        "quote": "INSIGHT",
-        "matrix": "TRADE-OFF",
-    }.get(kind, "AI")
-    bb = draw.textbbox((0,0), core_text, font=title_font)
-    draw.text(
-        (cx-(bb[2]-bb[0])/2, cy-(bb[3]-bb[1])/2),
-        core_text,
-        font=title_font,
-        fill=p["text"]
-    )
-
-    # Place callouts organically around the core, with deterministic jitter.
-    base_positions = [
-        (0.08, 0.12), (0.69, 0.10), (0.03, 0.68),
-        (0.70, 0.69), (0.38, 0.02)
-    ]
-    for i, label in enumerate(labels[:5]):
-        bx = x + w*base_positions[i][0] + rng.uniform(-22, 22)
-        by = y + h*base_positions[i][1] + rng.uniform(-12, 16)
-        bw = min(360, max(210, 22*len(label)+75))
-        bh = 58
-        # Keep callouts inside the visual safe area.
-        bx = max(x+12, min(x+w-bw-12, bx))
-        by = max(y+12, min(y+h-bh-12, by))
-        draw_glass_label(
-            draw,
-            (bx, by, bx+bw, by+bh),
-            label,
-            p,
-            emphasis=(i == 0),
-        )
-        # Fine connector line, deliberately not snapped to a grid.
-        tx = bx+bw/2
-        ty = by+bh/2
-        dx, dy = cx-tx, cy-ty
-        length = max(math.hypot(dx, dy), 1)
-        sx = tx + dx/length*30
-        sy = ty + dy/length*30
-        ex = cx - dx/length*core_r
-        ey = cy - dy/length*core_r
-        draw.line(
-            (sx, sy, ex, ey),
-            fill=(*p["accent"], 70 if i else 115),
+            (cx-210+offset, cy-150, cx+210+offset, cy+150),
+            190+i*4, 355-i*3,
+            fill=(*p["accent"], 35+i*8),
             width=2
         )
 
-    # Minimal live-status line; no invented quantitative values.
-    status = {
-        "flow": "EXECUTION PATH ACTIVE",
-        "architecture": "DEPENDENCY GRAPH ACTIVE",
-        "metrics": "SIGNAL MONITORING",
-        "risk": "FAILURE SURFACE",
-        "compare": "CONTRASTING STATES",
-        "timeline": "SEQUENCE IN MOTION",
-        "evidence": "SOURCE-BASED CLAIM",
-        "decision": "CONTEXTUAL DECISION",
-        "journey": "ADAPTIVE SYSTEM",
-        "steps": "PROCESS STATE",
-        "quote": "ORIGINAL COMMENTARY",
-        "matrix": "TRADE-OFF SPACE",
-    }.get(kind, "AI SYSTEM ACTIVE")
+    draw.ellipse(
+        (cx-58, cy-58, cx+58, cy+58),
+        fill=(7, 10, 16, 235),
+        outline=(*p["accent"], 235),
+        width=3
+    )
+    f = ImageFont.truetype(BOLD, 30)
+    label = (labels[0] if labels else "AI").upper()[:14]
+    bb = draw.textbbox((0,0), label, font=f)
     draw.text(
-        (x+18, y+h-28),
-        "●  " + status,
-        font=body_font,
-        fill=(*p["accent"], 190)
+        (cx-(bb[2]-bb[0])/2, cy-(bb[3]-bb[1])/2),
+        label, font=f, fill=p["text"]
     )
 
+    # One editorial callout, not a cluster.
+    if labels:
+        bw = min(390, max(230, 22*len(labels[-1])+75))
+        bx, by = x+70, y+h-130
+        draw_glass_label(draw, (bx, by, bx+bw, by+58), labels[-1], p, True)
 
+
+def draw_flow(draw, area, p, labels, seed):
+    x, y, w, h = area
+    rng = random.Random(seed)
+    points = []
+    for i in range(7):
+        px = x + 85 + i*(w-170)/6
+        py = y + h*0.52 + math.sin(i*1.25 + seed)*75 + rng.uniform(-24,24)
+        points.append((px, py))
+
+    # Smooth-looking segmented flow paths.
+    for j in range(4):
+        prev = points[0]
+        for i in range(1, len(points)):
+            px, py = points[i]
+            mx = (prev[0]+px)/2
+            my = (prev[1]+py)/2 + math.sin(i+j)*18
+            draw.line((prev[0],prev[1],mx,my), fill=(*p["accent"],55+j*12), width=2+j%2)
+            draw.line((mx,my,px,py), fill=(*p["accent"],80+j*12), width=2)
+            prev = (px,py)
+
+    for i, (px, py) in enumerate(points):
+        r = 16 if i in (0,6) else 10
+        draw.ellipse((px-r,py-r,px+r,py+r), fill=(8,12,18,235), outline=(*p["accent"],220), width=2)
+        if i < len(labels):
+            bw = min(300, max(190, 18*len(labels[i])+65))
+            bx = px-bw/2
+            by = py-92 if i%2 == 0 else py+45
+            draw_glass_label(draw, (bx,by,bx+bw,by+52), labels[i], p, i==0)
+
+
+def draw_architecture(draw, area, p, labels, seed):
+    x, y, w, h = area
+    cx = x+w/2
+    layers = [
+        (y+h*0.16, w*0.58, labels[0] if labels else "INTERFACE"),
+        (y+h*0.38, w*0.72, labels[1] if len(labels)>1 else "ORCHESTRATION"),
+        (y+h*0.60, w*0.84, labels[2] if len(labels)>2 else "DATA"),
+        (y+h*0.82, w*0.94, labels[3] if len(labels)>3 else "INFRASTRUCTURE"),
+    ]
+    for i,(yy,ww,label) in enumerate(layers):
+        left = cx-ww/2
+        right = cx+ww/2
+        draw.rounded_rectangle(
+            (left,yy,right,yy+78),
+            radius=28,
+            fill=(10,14,21,155-i*12),
+            outline=(*p["accent"],155-i*18),
+            width=2
+        )
+        draw.text(
+            (left+30, yy+23),
+            label[:30],
+            font=ImageFont.truetype(BOLD if i==0 else FONT, 23),
+            fill=p["text"]
+        )
+        if i < len(layers)-1:
+            draw.line(
+                (cx,yy+78,cx,y+h*([0.38,0.60,0.82][i])),
+                fill=(*p["accent"],80),
+                width=2
+            )
+
+
+def draw_compare(draw, area, p, labels, seed):
+    x, y, w, h = area
+    mid = x+w/2
+    # Two distinct states, no card grid.
+    for side, xx, accent_alpha in [
+        ("BEFORE", x+w*0.25, 95),
+        ("AFTER", x+w*0.75, 220),
+    ]:
+        draw.ellipse(
+            (xx-105,y+h*0.48-105,xx+105,y+h*0.48+105),
+            fill=(8,12,18,220),
+            outline=(*p["accent"],accent_alpha),
+            width=3
+        )
+    # Transformation ribbon.
+    draw.line(
+        (mid-115,y+h*0.48,mid+115,y+h*0.48),
+        fill=(*p["accent"],185),
+        width=5
+    )
+    draw.polygon(
+        [(mid+115,y+h*0.48),(mid+90,y+h*0.48-15),(mid+90,y+h*0.48+15)],
+        fill=(*p["accent"],205)
+    )
+    if labels:
+        draw_glass_label(draw,(x+60,y+40,x+380,y+96),labels[0],p,False)
+    if len(labels)>1:
+        draw_glass_label(draw,(x+w-380,y+40,x+w-60,y+96),labels[1],p,True)
+    for i, lab in enumerate(labels[2:4]):
+        bx = x+w*0.34 + i*230
+        draw_glass_label(draw,(bx,y+h-95,bx+205,y+h-40),lab,p,False)
+
+
+def draw_metrics(draw, area, p, labels, seed):
+    x, y, w, h = area
+    # Minimal editorial chart with no invented numbers.
+    left, bottom = x+90, y+h-70
+    right, top = x+w-80, y+75
+    draw.line((left,top,left,bottom), fill=(*p["muted"],90), width=2)
+    draw.line((left,bottom,right,bottom), fill=(*p["muted"],90), width=2)
+
+    pts=[]
+    rng=random.Random(seed)
+    for i in range(9):
+        px=left+(right-left)*i/8
+        py=bottom-(bottom-top)*(0.18+0.65*(i/8)**1.15)+rng.uniform(-12,12)
+        pts.append((px,py))
+    for a,b in zip(pts,pts[1:]):
+        draw.line((a[0],a[1],b[0],b[1]),fill=(*p["accent"],205),width=4)
+    for i,(px,py) in enumerate(pts):
+        r=6 if i not in (4,8) else 9
+        draw.ellipse((px-r,py-r,px+r,py+r),fill=(*p["accent"],230))
+    if labels:
+        draw_glass_label(draw,(x+105,y+80,x+390,y+136),labels[0],p,True)
+    if len(labels)>1:
+        draw_glass_label(draw,(right-340,top+20,right-55,top+76),labels[1],p,False)
+
+
+def draw_risk(draw, area, p, labels, seed):
+    x,y,w,h=area
+    rng=random.Random(seed)
+    cx=x+w*0.50
+    # Stable left side becomes a branching fracture toward the right.
+    start=(x+100,y+h*0.52)
+    end=(x+w-100,y+h*0.52)
+    draw.line((start[0],start[1],end[0],end[1]),fill=(*p["accent"],110),width=4)
+    for i in range(6):
+        px=x+w*(0.35+i*0.08)
+        py=y+h*0.52+rng.uniform(-25,25)
+        draw.line((px,py,px+rng.uniform(55,100),py+rng.uniform(-90,90)),fill=(*p["accent"],100),width=3)
+        draw.ellipse((px-7,py-7,px+7,py+7),fill=(*p["accent"],220))
+    draw.ellipse((start[0]-30,start[1]-30,start[0]+30,start[1]+30),fill=(8,12,18,235),outline=(*p["accent"],180),width=2)
+    draw.ellipse((end[0]-42,end[1]-42,end[0]+42,end[1]+42),fill=(8,12,18,235),outline=(*p["accent"],240),width=3)
+    if labels:
+        draw_glass_label(draw,(x+45,y+80,x+350,y+136),labels[0],p,False)
+    if len(labels)>1:
+        draw_glass_label(draw,(x+w-390,y+h-135,x+w-70,y+h-79),labels[1],p,True)
+
+
+def draw_timeline(draw, area, p, labels, seed):
+    x,y,w,h=area
+    yline=y+h*0.55
+    # Curved-ish timeline using short segments.
+    pts=[]
+    for i in range(7):
+        px=x+100+i*(w-200)/6
+        py=yline+math.sin(i*0.9+seed)*65
+        pts.append((px,py))
+    for a,b in zip(pts,pts[1:]):
+        draw.line((a[0],a[1],b[0],b[1]),fill=(*p["accent"],185),width=4)
+    for i,(px,py) in enumerate(pts):
+        r=13 if i%2 else 17
+        draw.ellipse((px-r,py-r,px+r,py+r),fill=(8,12,18,235),outline=(*p["accent"],220),width=2)
+        if i<len(labels):
+            bw=min(270,max(175,17*len(labels[i])+65))
+            by=py-88 if i%2==0 else py+45
+            draw_glass_label(draw,(px-bw/2,by,px+bw/2,by+52),labels[i],p,i==0)
+
+
+def draw_evidence(draw, area, p, labels, seed):
+    x,y,w,h=area
+    # One source ribbon + supporting evidence markers, avoiding card walls.
+    draw.rounded_rectangle(
+        (x+90,y+110,x+w-90,y+h-115),
+        radius=34,
+        fill=(9,13,20,150),
+        outline=(*p["accent"],130),
+        width=2
+    )
+    f=ImageFont.truetype(BOLD,31)
+    quote=(labels[0] if labels else "SOURCE")[:54]
+    draw.text((x+145,y+160), "EVIDENCE",font=f,fill=(*p["accent"],210))
+    body=ImageFont.truetype(FONT,27)
+    lines=wrap(draw,quote,body,w-320,3)
+    yy=y+225
+    for line in lines:
+        draw.text((x+145,yy),line,font=body,fill=p["text"])
+        yy+=38
+    for i,lab in enumerate(labels[1:4]):
+        bx=x+150+i*390
+        draw_glass_label(draw,(bx,y+h-185,bx+330,y+h-130),lab,p,i==0)
+
+
+def draw_decision(draw, area, p, labels, seed):
+    x,y,w,h=area
+    cx=x+w*0.48
+    root=(x+120,y+h*0.50)
+    junction=(cx,y+h*0.50)
+    draw.line((root[0],root[1],junction[0],junction[1]),fill=(*p["accent"],200),width=4)
+    draw.ellipse((root[0]-22,root[1]-22,root[0]+22,root[1]+22),fill=(8,12,18,235),outline=(*p["accent"],210),width=3)
+    for i in range(3):
+        yy=y+h*(0.24+i*0.26)
+        end=(x+w-120,yy)
+        draw.line((junction[0],junction[1],end[0],end[1]),fill=(*p["accent"],100+i*40),width=3)
+        draw.ellipse((end[0]-18,end[1]-18,end[0]+18,end[1]+18),fill=(8,12,18,235),outline=(*p["accent"],170+i*25),width=2)
+        if i<len(labels):
+            bw=min(300,max(190,18*len(labels[i])+65))
+            draw_glass_label(draw,(end[0]-bw-25,yy-28,end[0]-25,yy+28),labels[i],p,i==2)
+
+
+def draw_steps(draw, area, p, labels, seed):
+    x,y,w,h=area
+    count=min(5,max(3,len(labels)))
+    x0=x+170
+    for i in range(count):
+        yy=y+80+i*(h-160)/max(count-1,1)
+        draw.ellipse((x0-18,yy-18,x0+18,yy+18),fill=(8,12,18,235),outline=(*p["accent"],210),width=3)
+        if i<count-1:
+            next_y=y+80+(i+1)*(h-160)/max(count-1,1)
+            draw.line((x0,next_y-18,x0,yy+18),fill=(*p["accent"],110),width=3)
+        if i<len(labels):
+            draw_glass_label(draw,(x0+55,yy-28,x0+55+min(520,max(260,20*len(labels[i])+80)),yy+28),labels[i],p,i==0)
+
+
+def draw_quote(draw, area, p, labels, seed):
+    x,y,w,h=area
+    f=ImageFont.truetype(BOLD,48)
+    quote=(labels[0] if labels else "THE KEY INSIGHT")
+    lines=wrap(draw,quote,f,w-300,3)
+    yy=y+120
+    draw.text((x+115,y+75),"“",font=ImageFont.truetype(BOLD,90),fill=(*p["accent"],210))
+    for line in lines:
+        draw.text((x+175,yy),line,font=f,fill=p["text"])
+        yy+=62
+    draw.line((x+175,yy+20,x+w-190,yy+20),fill=(*p["accent"],130),width=2)
+    if len(labels)>1:
+        draw.text((x+175,yy+45),labels[1][:48],font=ImageFont.truetype(FONT,24),fill=(*p["muted"],190))
+
+
+def draw_matrix(draw, area, p, labels, seed):
+    x,y,w,h=area
+    cx=x+w*0.5
+    cy=y+h*0.5
+    size=min(w*0.55,h*0.68)
+    left=cx-size/2
+    top=cy-size/2
+    draw.rounded_rectangle((left,top,left+size,top+size),radius=30,fill=(9,13,20,135),outline=(*p["accent"],120),width=2)
+    draw.line((cx,top+25,cx,top+size-25),fill=(*p["accent"],85),width=2)
+    draw.line((left+25,cy,left+size-25,cy),fill=(*p["accent"],85),width=2)
+    positions=[
+        (left+size*0.16,top+size*0.16),
+        (left+size*0.55,top+size*0.16),
+        (left+size*0.16,top+size*0.60),
+        (left+size*0.55,top+size*0.60),
+    ]
+    for i,(px,py) in enumerate(positions):
+        lab=labels[i] if i<len(labels) else f"OPTION {i+1}"
+        draw.text((px,py),lab[:22],font=ImageFont.truetype(BOLD if i==0 else FONT,21),fill=p["text"] if i==0 else (*p["muted"],200))
+
+
+def draw_visual_v19(draw, kind, area, p, scene=None, seed=1):
+    """
+    V19 visual grammar router.
+
+    Each scene gets a deliberately different visual language instead of
+    reusing the same central-circle/network composition.
+    """
+    scene = scene or {}
+    labels = visual_keywords(scene, 5)
+
+    # Guarantee meaningful labels for the specialized grammars.
+    if len(labels) < 3:
+        labels = (labels + ["MECHANISM", "IMPLICATION", "OUTCOME"])[:5]
+
+    dispatch = {
+        "journey": draw_hero,
+        "flow": draw_flow,
+        "architecture": draw_architecture,
+        "compare": draw_compare,
+        "metrics": draw_metrics,
+        "risk": draw_risk,
+        "timeline": draw_timeline,
+        "evidence": draw_evidence,
+        "decision": draw_decision,
+        "steps": draw_steps,
+        "quote": draw_quote,
+        "matrix": draw_matrix,
+    }
+
+    fn = dispatch.get(kind, draw_hero)
+    fn(draw, area, p, labels, seed)
+
+
+def draw_visual(draw, kind, area, p, scene=None, seed=1):
+    # V19: deliberately varied visual grammar per scene.
+    draw_visual_v19(draw, kind, area, p, scene, seed)
 
 def make_card(scene, index, title, p, path, visual_path=None):
     from PIL import Image, ImageDraw, ImageFont, ImageFilter
@@ -781,9 +980,9 @@ def render_scene(index, scene, title, p):
         f"[0:v]{base};"
         "[2:v]format=rgba,setpts=PTS-STARTPTS,"
         "scale=1970:1108,"
-        "zoompan=z='1.0+0.022*(1-exp(-on/28))':"
-        "x='iw/2-(iw/zoom/2)+5*sin(on/71)':"
-        "y='ih/2-(ih/zoom/2)+4*cos(on/83)':"
+        "zoompan=z='1.0+0.018*(1-exp(-on/32))':"
+        "x='iw/2-(iw/zoom/2)+8*sin(on/83)':"
+        "y='ih/2-(ih/zoom/2)+6*cos(on/97)':"
         "d=1:s=1970x1108:fps=30,"
         "fade=t=in:st=0:d=0.75:alpha=1[vl];"
         "[base][vl]"
@@ -852,7 +1051,7 @@ def main():
     run(["ffmpeg","-y","-f","concat","-safe","0","-i",str(concat),"-c","copy","-movflags","+faststart",str(OUTPUT)])
     if not OUTPUT.exists() or OUTPUT.stat().st_size==0: raise SystemExit("Final MP4 was not created correctly.")
     subprocess.run(["ffprobe","-v","error","-show_entries","format=duration,size","-show_entries","stream=codec_name,width,height","-of","default=noprint_wrappers=1",str(OUTPUT)],check=True)
-    print(f"V17 PREMIUM VIDEO CREATED: {OUTPUT} | {OUTPUT.stat().st_size} bytes")
+    print(f"V19 PREMIUM VIDEO CREATED: {OUTPUT} | {OUTPUT.stat().st_size} bytes")
 
 if __name__ == "__main__":
     main()
