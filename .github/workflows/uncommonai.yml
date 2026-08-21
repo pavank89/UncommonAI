@@ -103,6 +103,7 @@ jobs:
                   r"##\s+Recommended YouTube concept\s*\n\s*\*\*(.+?)\*\*",
               ]
               topic = None
+
               for pattern in patterns:
                   match = re.search(pattern, body, re.IGNORECASE | re.DOTALL)
                   if match:
@@ -111,10 +112,12 @@ jobs:
 
           if not topic:
               raise SystemExit(
-                  "No approved topic supplied. For manual produce testing, enter a topic in approved_topic."
+                  "No approved topic supplied. For manual produce testing, "
+                  "enter a topic in approved_topic."
               )
 
           print(f"Approved topic: {topic}")
+
           with open("/tmp/topic.txt", "w", encoding="utf-8") as f:
               f.write(topic)
           PY
@@ -132,7 +135,9 @@ jobs:
       - name: Debug production workspace
         run: |
           pwd
+          echo "===== WORKSPACE ====="
           ls -la ./workspace/
+          echo "===== ALL FILES ====="
           find ./workspace -maxdepth 3 -type f -print
 
       - name: Save production package
@@ -183,11 +188,21 @@ jobs:
         run: |
           python .github/workflow/short_renderer.py
 
+      - name: Debug Shorts output
+        if: always()
+        run: |
+          echo "===== SHORTS DIRECTORY ====="
+          ls -lah ./workspace/shorts/ || true
+          echo "===== ALL VIDEO FILES ====="
+          find ./workspace -type f \( -name "*.mp4" -o -name "*.mp3" -o -name "*.png" \) -print
+
       - name: Validate Shorts
         run: |
-          for f in ./workspace/shorts/short_01.mp4 \
-                   ./workspace/shorts/short_02.mp4 \
-                   ./workspace/shorts/short_03.mp4; do
+          for f in \
+            ./workspace/shorts/short_01.mp4 \
+            ./workspace/shorts/short_02.mp4 \
+            ./workspace/shorts/short_03.mp4
+          do
             test -s "$f"
             ffprobe -v error \
               -show_entries format=duration,size \
@@ -224,7 +239,11 @@ jobs:
           gh issue comment ${{ github.event.issue.number }} --body "✅ Production package, long-form MP4, 3 Shorts, and YouTube uploads are complete."
 
   final_approval:
-    if: github.event_name == 'issue_comment' && github.event.issue.pull_request == null && contains(github.event.comment.body, 'PUBLISH') && contains(github.event.issue.body, '<!-- uncommonai-topic-approval -->')
+    if: |
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request == null &&
+      contains(github.event.comment.body, 'PUBLISH') &&
+      contains(github.event.issue.body, '<!-- uncommonai-topic-approval -->')
     runs-on: ubuntu-latest
 
     steps:
