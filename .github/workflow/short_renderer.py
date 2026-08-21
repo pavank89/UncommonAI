@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
+import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -13,31 +15,46 @@ PACKAGE_FILE = WORK / "production_package.json"
 MANIFEST_FILE = SHORTS_DIR / "shorts_manifest.json"
 
 SHORTS_DIR.mkdir(parents=True, exist_ok=True)
+VOICE = os.getenv("VIDEO_VOICE", "en-US-AriaNeural")
+W, H = 1080, 1920
 
-VOICE = "en-US-AriaNeural"
-
+# Same Short card geometry/typography for brand consistency.
+# Palette changes per Short and per production topic.
+PALETTES = [
+    {"bg": (8, 20, 30), "panel": (16, 40, 56), "accent": (0, 220, 255), "muted": (140, 185, 200)},
+    {"bg": (28, 9, 22), "panel": (54, 16, 42), "accent": (255, 70, 160), "muted": (210, 145, 185)},
+    {"bg": (27, 19, 7), "panel": (56, 38, 12), "accent": (255, 190, 45), "muted": (215, 180, 115)},
+    {"bg": (7, 27, 19), "panel": (13, 55, 38), "accent": (45, 230, 145), "muted": (130, 195, 165)},
+    {"bg": (20, 8, 31), "panel": (42, 18, 62), "accent": (190, 90, 255), "muted": (175, 140, 210)},
+    {"bg": (30, 13, 8), "panel": (61, 26, 13), "accent": (255, 105, 45), "muted": (215, 150, 120)},
+    {"bg": (9, 19, 31), "panel": (16, 39, 60), "accent": (55, 175, 255), "muted": (135, 175, 205)},
+    {"bg": (29, 8, 13), "panel": (58, 17, 26), "accent": (255, 75, 75), "muted": (215, 145, 145)},
+]
 
 def run(cmd):
     print("RUN:", " ".join(str(x) for x in cmd))
     subprocess.run(cmd, check=True)
 
-
 def safe_text(value):
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
+def font(path, size):
+    from PIL import ImageFont
+    return ImageFont.truetype(path, size)
+
+def palette_for_run(package):
+    seed = safe_text(package.get("visual_run_id") or package.get("title") or package.get("chosen_title") or "uncommonAI")
+    digest = hashlib.sha256(seed.encode("utf-8")).digest()
+    offset = int.from_bytes(digest[:2], "big") % len(PALETTES)
+    return [PALETTES[(offset + i) % len(PALETTES)] for i in range(3)]
 
 def audio_duration(audio):
-    value = subprocess.check_output(
-        [
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            str(audio),
-        ],
-        text=True,
-    ).strip()
-    return float(value)
-
+    return float(subprocess.check_output([
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        str(audio),
+    ], text=True).strip())
 
 def make_srt(text, duration, path):
     words = safe_text(text).split() or ["uncommonAI"]
@@ -53,116 +70,84 @@ def make_srt(text, duration, path):
 
     lines = []
     for i, chunk in enumerate(chunks, 1):
-        lines.extend([
-            str(i),
-            f"{stamp((i - 1) * slot)} --> {stamp(i * slot)}",
-            chunk,
-            "",
-        ])
+        lines += [str(i), f"{stamp((i-1)*slot)} --> {stamp(i*slot)}", chunk, ""]
     path.write_text("\n".join(lines), encoding="utf-8")
 
+def make_card(title, number, hook, narration, path, palette):
+    from PIL import Image, ImageDraw
 
-def make_card(title, short_number, hook, narration, path):
-    from PIL import Image, ImageDraw, ImageFont
-
-    W, H = 1080, 1920
-    img = Image.new("RGB", (W, H), (9, 12, 18))
+    img = Image.new("RGB", (W, H), palette["bg"])
     draw = ImageDraw.Draw(img)
 
     bold_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     normal_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    brand = font(bold_path, 58)
+    hero = font(bold_path, 68)
+    body = font(normal_path, 36)
+    small = font(normal_path, 25)
 
-    bold = ImageFont.truetype(bold_path, 58)
-    hero = ImageFont.truetype(bold_path, 70)
-    normal = ImageFont.truetype(normal_path, 37)
-    small = ImageFont.truetype(normal_path, 25)
+    # UNIFORM SHORT CARD SYSTEM.
+    draw.rectangle((42, 42, W - 42, H - 42), outline=palette["accent"], width=3)
+    draw.rectangle((42, 42, W - 42, 275), fill=palette["panel"])
 
-    # High-contrast editorial layout.
-    draw.rectangle((42, 42, W - 42, H - 42), outline=(65, 75, 95), width=3)
-    draw.rectangle((42, 42, W - 42, 270), fill=(18, 24, 34))
+    draw.text((75, 82), "uncommonAI", font=brand, fill=(242, 244, 248))
+    draw.text((75, 165), f"SHORT {number}  •  AI / TECH",
+              font=small, fill=palette["muted"])
 
-    draw.text((72, 78), "uncommonAI", font=bold, fill=(240, 243, 248))
-    draw.text(
-        (72, 160),
-        f"SHORT {short_number}  •  AI / TECH",
-        font=small,
-        fill=(145, 157, 177),
-    )
-
-    # Hook is the visual focal point.
     hook_lines = textwrap.wrap(safe_text(hook)[:145], width=25)
-    y = 345
+    y = 340
     for line in hook_lines[:4]:
-        draw.text((72, y), line, font=hero, fill=(250, 250, 252))
-        y += 88
+        draw.text((75, y), line, font=hero, fill=(250, 250, 252))
+        y += 82
 
-    # A simple "insight" panel makes the card less like a slideshow.
     draw.rounded_rectangle(
-        (72, 735, W - 72, 1160),
+        (72, 760, W - 72, 1190),
         radius=28,
-        outline=(80, 92, 116),
+        fill=palette["panel"],
+        outline=palette["accent"],
         width=3,
     )
-    draw.text(
-        (105, 775),
-        "THE TAKEAWAY",
-        font=small,
-        fill=(150, 163, 184),
-    )
+    draw.text((105, 800), "THE TAKEAWAY", font=small, fill=palette["muted"])
 
-    body = textwrap.wrap(safe_text(narration), width=38)
-    y = 840
-    for line in body[:7]:
-        draw.text((105, y), line, font=normal, fill=(220, 224, 232))
-        y += 55
+    body_lines = textwrap.wrap(safe_text(narration), width=38)
+    y = 865
+    for line in body_lines[:7]:
+        draw.text((105, y), line, font=body, fill=(220, 224, 232))
+        y += 53
 
-    # Progress markers encourage completion and make each Short feel designed.
+    # Uniform progress strip.
     for i in range(3):
         x1 = 72 + i * 300
-        x2 = x1 + 250
         draw.rounded_rectangle(
-            (x1, 1300, x2, 1316),
+            (x1, 1330, x1 + 250, 1346),
             radius=8,
-            fill=(50, 58, 72) if i else (205, 213, 225),
+            fill=palette["accent"] if i == number - 1 else palette["panel"],
+            outline=palette["muted"],
+            width=1,
         )
 
     draw.text(
-        (72, 1370),
-        "Watch to the end for the practical takeaway.",
-        font=small,
-        fill=(160, 170, 188),
-    )
-
-    draw.text(
-        (72, H - 135),
+        (72, 1400),
         "Original commentary • uncommonAI",
         font=small,
-        fill=(130, 140, 158),
+        fill=palette["muted"],
     )
-
     img.save(path, quality=95)
 
-
-def render_short(index, title, hook, script):
+def render_short(index, title, hook, script, palette):
     audio = SHORTS_DIR / f"short_{index:02d}.mp3"
     image = SHORTS_DIR / f"short_{index:02d}.png"
     srt = SHORTS_DIR / f"short_{index:02d}.srt"
     output = SHORTS_DIR / f"short_{index:02d}.mp4"
 
     run([
-        "edge-tts",
-        "--voice", VOICE,
+        "edge-tts", "--voice", VOICE,
         "--text", script,
         "--write-media", str(audio),
     ])
 
     duration = audio_duration(audio)
-
-    # Keep Shorts in the useful 20-60 second range.
-    if duration > 59:
-        print(f"WARNING: Short {index} is {duration:.1f}s; target is under 60s.")
-
-    make_card(title, index, hook, script, image)
+    make_card(title, index, hook, script, image, palette)
     make_srt(script, duration, srt)
 
     subtitle_path = str(srt).replace("\\", "/").replace(":", "\\:")
@@ -174,19 +159,13 @@ def render_short(index, title, hook, script):
     )
 
     run([
-        "ffmpeg", "-y",
-        "-loop", "1",
-        "-i", str(image),
-        "-i", str(audio),
+        "ffmpeg", "-y", "-loop", "1",
+        "-i", str(image), "-i", str(audio),
         "-vf", vf,
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-tune", "stillimage",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-shortest",
-        "-t", str(duration),
+        "-c:v", "libx264", "-preset", "veryfast",
+        "-tune", "stillimage", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k",
+        "-shortest", "-t", str(duration),
         "-movflags", "+faststart",
         str(output),
     ])
@@ -196,10 +175,7 @@ def render_short(index, title, hook, script):
 
     print(f"SHORT CREATED: {output}")
     print(f"DURATION: {duration:.2f}s")
-    print(f"SIZE BYTES: {output.stat().st_size}")
-
     return output
-
 
 def main():
     if not PACKAGE_FILE.exists():
@@ -211,34 +187,28 @@ def main():
 
     package = json.loads(PACKAGE_FILE.read_text(encoding="utf-8"))
     title = safe_text(package.get("title") or package.get("chosen_title") or "uncommonAI")
-
     shorts = package.get("shorts", [])
 
     if len(shorts) != 3:
-        raise SystemExit(
-            f"Expected exactly 3 dedicated Shorts in production_package.json, found {len(shorts)}"
-        )
+        raise SystemExit(f"Expected exactly 3 Shorts, found {len(shorts)}")
 
-    # Clean stale files so old manifests cannot be uploaded accidentally.
     for item in SHORTS_DIR.iterdir():
         if item.is_file():
             item.unlink()
 
+    palettes = palette_for_run(package)
     manifest = []
 
     for index, short in enumerate(shorts, 1):
         short_title = safe_text(short.get("title"))
         script = safe_text(short.get("script"))
-        visual_prompt = safe_text(short.get("visual_prompt"))
-
         if not short_title or not script:
             raise SystemExit(f"Short {index} is missing title or script.")
 
-        # The renderer doesn't need the visual prompt to be executable, but we
-        # retain it in the manifest for auditability/future visual upgrades.
-        hook = short_title
+        hook = safe_text(short.get("hook")) or short_title
+        visual_prompt = safe_text(short.get("visual_prompt"))
 
-        output = render_short(index, title, hook, script)
+        output = render_short(index, title, hook, script, palettes[index - 1])
 
         manifest.append({
             "index": index,
@@ -255,12 +225,6 @@ def main():
 
     print("===== SHORTS MANIFEST =====")
     print(MANIFEST_FILE.read_text(encoding="utf-8"))
-
-    print("===== SHORTS CREATED =====")
-    for index in range(1, 4):
-        path = SHORTS_DIR / f"short_{index:02d}.mp4"
-        print(f"{path} | {path.stat().st_size} bytes")
-
 
 if __name__ == "__main__":
     main()
