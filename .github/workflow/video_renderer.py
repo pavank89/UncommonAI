@@ -137,7 +137,7 @@ def wrap_to_width(draw, text, font, max_width):
 def make_srt(text, duration, path):
     words = safe_text(text).split() or ["uncommonAI"]
     chunks = [
-        " ".join(words[i:i + 9])
+        " ".join(words[i:i + 7])
         for i in range(0, len(words), 9)
     ]
 
@@ -186,7 +186,7 @@ def draw_wrapped(draw, lines, x, y, font, fill, line_gap=12):
     return y
 
 
-def draw_diagram(draw, visual_type, x, y, w, h, accent, accent2, text_color, muted):
+def draw_diagram(draw, visual_type, x, y, w, h, accent, accent2, text_color, muted, panel):
     """
     Compact, generic visual language. It intentionally does not depend on
     copyrighted images or external assets.
@@ -212,7 +212,7 @@ def draw_diagram(draw, visual_type, x, y, w, h, accent, accent2, text_color, mut
 
     gap = 22
     box_w = (w - gap * (len(labels) - 1)) / len(labels)
-    box_h = min(170, h * 0.48)
+    box_h = min(150, h * 0.42)
     top = y + (h - box_h) / 2
 
     label_font = ImageFont.truetype(bold_path, 27)
@@ -225,7 +225,7 @@ def draw_diagram(draw, visual_type, x, y, w, h, accent, accent2, text_color, mut
         draw.rounded_rectangle(
             (bx, top, bx + box_w, top + box_h),
             radius=22,
-            fill=(255, 255, 255, 8),
+            fill=panel,
             outline=accent,
             width=3,
         )
@@ -354,6 +354,7 @@ def make_scene_card(
         palette["accent2"],
         palette["text"],
         palette["muted"],
+        palette["panel"],
     )
 
     # Tiny supporting line, not the narration.
@@ -366,8 +367,8 @@ def make_scene_card(
         draw,
         support,
         normal_path,
-        max_size=28,
-        min_size=20,
+        max_size=30,
+        min_size=21,
         max_width=1500,
     )
 
@@ -447,30 +448,45 @@ def render_segment(
         .replace("'", "\\'")
     )
 
-    # Captions are confined to a dedicated bottom zone.
-    vf = (
-        f"subtitles='{subtitle_path}':"
-        "force_style='FontName=DejaVu Sans,"
-        "FontSize=25,"
-        "PrimaryColour=&H00FFFFFF,"
-        "OutlineColour=&H00000000,"
-        "Outline=3,"
-        "Shadow=1,"
-        "Alignment=2,"
-        "MarginL=170,"
-        "MarginR=170,"
-        "MarginV=70'"
+    # Captions are rendered AFTER the visual motion transform so they remain
+    # at a stable size and position. They get their own dark translucent pill
+    # at the bottom instead of competing with the card content.
+    subtitle_path = (
+        str(srt)
+        .replace("\\", "/")
+        .replace(":", "\\:")
+        .replace("'", "\\'")
     )
 
-    # Very subtle zoom gives the otherwise static card a little life.
-    # The image itself remains visually stable and readable.
-    vf += (
-        ",scale=1920:1080,"
-        "zoompan=z='min(zoom+0.00025,1.035)':"
+    # First apply a very subtle zoom. Then render subtitles on the final
+    # 1920x1080 frame. This prevents the subtitle layer from being zoomed.
+    motion_filter = (
+        "scale=1980:1114,"
+        "zoompan=z='min(zoom+0.00012,1.028)':"
         "x='iw/2-(iw/zoom/2)':"
         "y='ih/2-(ih/zoom/2)':"
         "d=1:s=1920x1080:fps=30"
     )
+
+    subtitle_filter = (
+        f"subtitles='{subtitle_path}':"
+        "force_style='FontName=DejaVu Sans,"
+        "FontSize=18,"
+        "Bold=0,"
+        "PrimaryColour=&H00FFFFFF,"
+        "OutlineColour=&H00000000,"
+        "BackColour=&HCC080A0F,"
+        "BorderStyle=3,"
+        "Outline=0,"
+        "Shadow=0,"
+        "Alignment=2,"
+        "MarginL=180,"
+        "MarginR=180,"
+        "MarginV=38,"
+        "WrapStyle=2'"
+    )
+
+    vf = f"{motion_filter},{subtitle_filter}"
 
     run([
         "ffmpeg",
