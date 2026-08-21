@@ -246,81 +246,135 @@ You are the lead producer for the faceless YouTube channel uncommonAI.
 
 Audience:
 Curious professionals, creators, developers and tech enthusiasts who want
-important AI developments explained clearly without needing an engineering
-background.
+practical technology explained clearly without unnecessary hype.
 
-APPROVED CONCEPT:
+APPROVED TOPIC:
 {topic}
 
 CRITICAL TOPIC LOCK:
 The approved concept above is the ONLY subject of this video.
 Do not replace it with a different topic, trend, list, or angle.
-The title, hook, description, script, scenes, Shorts, and sources must all
-directly support the approved concept.
 
-Create an ORIGINAL 8-10 minute YouTube package with approximately 1200-1500
-spoken words.
+EDITORIAL DIRECTION FOR THIS TOPIC:
 
-RULES:
-- Do not rewrite a source article or another creator.
-- Give a strong curiosity hook in the first 15 seconds.
-- Explain why the development matters to normal people, creators and businesses.
-- Simple language first, technical detail second.
-- Never invent statistics, quotes, benchmarks, capabilities, experiments,
-  customer stories, personal experiences, or productivity gains.
-- Separate verified facts from interpretation.
-- Use specific real products/tools when the topic is about tools.
-- Include specific primary/technical source URLs.
-- Avoid generic AI-news roundup structure.
-- Avoid vague marketing language such as "changing everything", "cutting through
-  the hype", or "verified productivity gains" unless backed by a concrete fact.
-- Create exactly 8 scenes and exactly 3 distinct Shorts.
-- Return valid JSON only.
+If the approved topic is:
+"5 AI Tools Actually Changing Productivity in 2026"
 
-TOOL-SPECIFIC REQUIREMENT:
-If the approved topic asks for five AI tools, identify EXACTLY FIVE specific,
-real AI products/tools.
+frame the video more accurately as:
+"5 Tools Actually Changing Productivity in 2026"
 
-Do NOT call them "Tool number one", "Tool number two", etc.
+Do NOT describe all five products as "AI tools" if some are primarily
+developer, research, visual communication, or workflow automation products.
+It is acceptable for a productivity tool to use AI without being primarily
+an AI product.
 
-For each tool include:
-1. Exact product/tool name.
-2. What it actually does.
-3. One concrete productivity workflow it improves.
-4. One concrete example of how a viewer could use it.
-5. A specific primary source URL supporting the relevant capability.
+For this topic, use exactly these five products:
+1. Claude Code
+2. Perplexity Pro
+3. Cursor
+4. Napkin AI
+5. Make.com
 
-The five tools must be meaningfully different.
+FACTUAL SAFETY — IMPORTANT:
 
-Do not invent features. If a capability cannot be supported by a source, omit
-the claim or clearly label it as interpretation.
+CURSOR:
+Do NOT claim that Cursor uses a "local vector database" unless a specific
+authoritative source directly supports that implementation detail.
 
-SOURCE REQUIREMENT:
-Use 4-8 sources.
-At least 3 sources must be specific primary/technical URLs such as:
-- exact product documentation
-- exact GitHub repository
-- exact research paper
-- official product announcement
-Do not use generic company homepages when a specific source exists.
+Prefer:
+"Cursor indexes and understands your codebase so its AI features can work
+across related files."
 
-NARRATIVE:
-Scene 1 — concrete hook and the problem.
-Scene 2 — explain the workflow/problem.
-Scene 3 — introduce the first concrete tool or mechanism.
-Scene 4 — continue with concrete tools and use cases.
-Scene 5 — limitations/trade-offs.
-Scene 6 — evidence and technical explanation.
-Scene 7 — practical comparison or decision framework.
-Scene 8 — conclusion with actionable advice.
+PERPLEXITY:
+Do NOT claim that Perplexity "aggregates multiple model architectures" or
+"enforces citation-backed synthesis."
+
+Prefer:
+"Perplexity combines web search with AI-generated answers and citations,
+making it useful when users need to trace claims back to sources."
+
+MAKE.COM:
+Do NOT call Make.com primarily an AI product.
+Describe it as a workflow automation and integration platform that can
+incorporate AI into automated workflows.
+
+GENERAL FACTUAL RULES:
+- Never invent statistics, benchmarks, customer results, quotes, capabilities,
+  internal architecture, or productivity gains.
+- If a capability cannot be supported by an authoritative source, omit it or
+  clearly label it as interpretation.
+- Separate verified product facts from your own analysis.
+- Prefer conservative wording over impressive but unsupported claims.
+
+CONTENT REQUIREMENTS:
+
+For every product:
+1. State the exact product name.
+2. Explain what it actually does.
+3. Give one concrete real-world workflow.
+4. Give one practical example a viewer could understand.
+5. Identify who benefits.
+6. Explain at least one meaningful limitation or trade-off.
+7. Include a relevant primary source supporting the product claims.
+
+BAD:
+"This tool dramatically improves productivity."
+
+GOOD:
+"A developer can use Claude Code inside a repository to inspect files,
+run tests, investigate an error and review proposed code changes."
+
+Avoid vague marketing phrases such as:
+- "changing everything"
+- "the future is here"
+- "game changer"
+- "revolutionizing work"
+- "verified productivity gains"
+- "cutting through the hype"
+
+The video should feel like an informed practitioner explaining:
+"What can I actually do with these tools today, and where should I still
+be careful?"
+
+SOURCES:
+- Use 5-8 sources.
+- Sources must be specific and directly relevant.
+- Prefer official product documentation, official product pages, official
+  announcements, official help pages, or specific technical papers.
+- Do NOT use generic company homepages when a specific source exists.
+- The "sources" field must contain plain URL strings, never Markdown links.
+
+SCRIPT:
+Create approximately 1200-1500 spoken words for a 7-10 minute video.
+
+The script must:
+- have a strong first-15-second hook
+- show a concrete productivity problem
+- introduce all five named products clearly
+- provide concrete workflows and examples
+- include limitations and trade-offs
+- compare when each type of tool is useful
+- contain original explanation and analysis
+- end with practical advice
+
+SCENES:
+Create exactly 8 scenes.
+Every scene must contain:
+- narration
+- visual_prompt
 
 Each scene must add new information. Do not repeat the same point eight times.
 
 SHORTS:
-Create 3 genuinely different Shorts. Each must have its own takeaway and must
-not simply copy a paragraph from the main script.
+Create exactly 3 distinct Shorts.
+Each Short must:
+- have a unique title
+- have a self-contained script
+- have a distinct takeaway
+- have a visual_prompt
+- NOT simply copy a paragraph from the main script
 
-YOUTUBE/YPP QUALITY:
+YOUTUBE / YPP QUALITY:
 - No copied scripts.
 - No article compilation.
 - No repetitive filler.
@@ -336,7 +390,7 @@ Do not use Markdown code fences.
 Do not include text before or after the JSON.
 Every array and object must be properly closed.
 Do not use trailing commas.
-The "sources" field must contain plain URL strings, never Markdown links.
+The "sources" field must contain plain URL strings.
 
 Schema:
 {{
@@ -356,16 +410,18 @@ Schema:
   "sources": ["https://..."]
 }}
 
-FINAL SELF-REVIEW BEFORE RETURNING JSON:
-- Is the entire package about the approved concept?
-- If five tools are requested, are exactly five real tools explicitly named?
-- Does each named tool have a concrete use case?
-- Does each named tool have a specific supporting source?
-- Did you avoid labels such as "Tool number one"?
-- Did you avoid unsupported productivity/performance claims?
-- Are at least 3 sources specific primary/technical URLs?
-- Are the failure modes/trade-offs concrete?
-- Does every scene add something new?
+FINAL SELF-REVIEW:
+Before returning JSON, verify:
+- Is the entire package about the approved topic?
+- If five tools are requested, are exactly five real products explicitly named?
+- Are Claude Code, Perplexity Pro, Cursor, Napkin AI and Make.com clearly named
+  for the productivity topic above?
+- Is Make.com described as workflow automation rather than an AI product?
+- Did you avoid the unsupported Cursor "local vector database" claim?
+- Did you avoid the unsupported Perplexity "multiple model architectures" claim?
+- Does every product have a concrete use case and limitation?
+- Does every important product claim have a supporting source?
+- Are sources specific rather than generic homepages?
 - Are the three Shorts genuinely different?
 - Is the main script approximately 1200-1500 spoken words?
 """
@@ -399,8 +455,8 @@ FINAL SELF-REVIEW BEFORE RETURNING JSON:
     if len(package.get("shorts", [])) != 3:
         raise SystemExit("Production package must contain exactly 3 Shorts.")
 
-    if len(package.get("sources", [])) < 4:
-        raise SystemExit("Production package must contain at least 4 sources.")
+    if len(package.get("sources", [])) < 5:
+        raise SystemExit("Production package must contain at least 5 sources.")
 
     (WORK / "package.json").write_text(
         json.dumps(package, indent=2),
@@ -409,15 +465,31 @@ FINAL SELF-REVIEW BEFORE RETURNING JSON:
 
     return package
 
+
 def quality_gate(package):
     prompt = f"""
 Act as a strict YouTube editorial, factuality, originality, and YPP-quality
 reviewer.
 
-Review this package:
+Review this production package:
+
 {json.dumps(package, indent=2)}
 
+The intended topic is:
+"5 AI Tools Actually Changing Productivity in 2026"
+
+For editorial accuracy, the preferred framing is:
+"5 Tools Actually Changing Productivity in 2026"
+
+The five expected products for this specific topic are:
+- Claude Code
+- Perplexity Pro
+- Cursor
+- Napkin AI
+- Make.com
+
 Return JSON only:
+
 {{
   "pass": true,
   "originality": 0,
@@ -444,28 +516,70 @@ pass=true only when:
 - title_quality >= 7
 - hook_quality >= 7
 
-Review requirements:
+REVIEW REQUIREMENTS:
 
-1. Do not fail merely because the video discusses AI tools or AI limitations.
-2. Reward concrete technical explanations and original analysis.
-3. Fail generic filler, copied/rephrased content, unsupported claims,
-   repetitive content, or misleading claims.
-4. If the topic asks for five tools, FAIL if the package uses generic labels
-   such as "Tool number one" instead of naming five real products.
-5. If the topic asks for five tools, FAIL if the tools do not have concrete
-   use cases.
-6. Check that at least 3 sources are specific primary/technical URLs.
-7. Generic root domains such as openai.com, google.com, or anthropic.com
-   should not count as strong evidence when a specific product/documentation
-   URL should have been supplied.
-8. Check that important capabilities are supported by the sources.
-9. Penalize vague marketing claims such as "verified productivity gains" when
-   no evidence is provided.
-10. Penalize generic listicle structure if it provides little original analysis.
-11. Do not require a personal experiment unless the package explicitly claims
-   to be one. A clearly labeled educational/representative workflow is valid.
-12. The title must accurately represent what the video actually contains.
-13. The hook should provide a concrete problem or before/after contrast.
+1. Do not fail merely because the video discusses AI, AI tools, or AI
+   limitations.
+
+2. Reward concrete technical explanations, practical workflows, comparisons,
+   limitations, and original analysis.
+
+3. FAIL generic filler, copied/rephrased content, unsupported claims,
+   repetitive content, fabricated capabilities, or misleading claims.
+
+4. For this topic, verify that the five products are explicitly named:
+   Claude Code, Perplexity Pro, Cursor, Napkin AI and Make.com.
+
+5. Do not accept generic labels such as "Tool number one" instead of product
+   names.
+
+6. Each product must have a concrete real-world use case and a meaningful
+   limitation or trade-off.
+
+7. At least 3 sources must be specific primary/technical URLs. Preferably
+   there should be a specific source for each product.
+
+8. Generic root domains such as openai.com, google.com, or anthropic.com do
+   not count as strong evidence when a specific product/documentation URL
+   should have been supplied.
+
+9. Check whether important product capabilities are actually supported by
+   the provided sources.
+
+10. Penalize vague marketing claims such as "verified productivity gains",
+    "revolutionizing work", or "game changer" when no evidence is provided.
+
+11. Do NOT require unsupported internal implementation details.
+
+12. Specifically flag these claims if they appear without authoritative
+    support:
+    - Cursor uses a "local vector database"
+    - Perplexity "aggregates multiple model architectures"
+    - Perplexity "enforces citation-backed synthesis"
+
+13. Make.com is primarily a workflow automation/integration platform.
+    Do NOT fail the package because it is not primarily an AI product.
+    The topic is about productivity tools, and a tool can incorporate AI
+    without being an AI product.
+
+14. The title must accurately represent what the video actually contains.
+    A title such as "5 Tools Actually Changing Productivity in 2026" is
+    acceptable and may be preferable to misleadingly calling every product
+    an AI product.
+
+15. The hook should provide a concrete productivity problem or before/after
+    contrast rather than generic AI hype.
+
+16. The main script should contain enough substantive material for a
+    7-10 minute video and approximately 1200-1500 spoken words.
+
+17. The eight scenes should add new information rather than repeat the same
+    point.
+
+18. The three Shorts should have genuinely different takeaways.
+
+19. The package should feel like an informed technical creator explaining
+    useful workflows, not mass-produced AI content.
 
 If the package fails, provide no more than 5 precise fixes.
 
@@ -479,6 +593,7 @@ Return valid JSON only.
     )
 
     return gate
+
 
 def produce():
     if not APPROVED_TOPIC:
