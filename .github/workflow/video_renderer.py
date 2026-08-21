@@ -123,6 +123,24 @@ def center_text(draw, text, box, font, fill):
     draw.text(((x1+x2-(bb[2]-bb[0]))/2, (y1+y2-(bb[3]-bb[1]))/2), text, font=font, fill=fill)
 
 
+
+def visual_keywords(scene):
+    """Return short, source-derived labels for visuals; never invent numeric facts."""
+    text = safe_text(
+        scene.get("visual_text")
+        or scene.get("key_phrase")
+        or scene.get("heading")
+        or scene.get("title")
+        or scene.get("narration")
+    )
+    parts = re.split(r"(?<=[.!?])\s+", text)
+    labels = []
+    for part in parts:
+        part = safe_text(part)
+        if 2 <= len(part.split()) <= 7:
+            labels.append(part[:42])
+    return labels[:4] or ["INPUT", "PROCESS", "CHECK", "RESULT"]
+
 def visual_kind(value, index):
     vt = safe_text(value).lower()
     if any(k in vt for k in ("warning", "risk", "failure", "bug", "problem")): return "risk"
@@ -131,11 +149,11 @@ def visual_kind(value, index):
     if any(k in vt for k in ("timeline", "sequence", "steps")): return "timeline"
     if any(k in vt for k in ("quote", "fact", "claim")): return "quote"
     if any(k in vt for k in ("matrix", "grid")): return "matrix"
-    kinds = ["flow", "compare", "risk", "metrics", "timeline", "matrix", "quote", "flow"]
+    kinds = ["flow", "compare", "risk", "metrics", "timeline", "matrix", "quote", "architecture", "steps", "flow"]
     return kinds[(index - 1) % len(kinds)]
 
 
-def draw_visual(draw, kind, area, p):
+def draw_visual(draw, kind, area, p, scene=None):
     from PIL import ImageFont
     x, y, w, h = area
     label = ImageFont.truetype(BOLD, 26)
@@ -204,6 +222,40 @@ def draw_visual(draw, kind, area, p):
         center_text(draw,"RISK",(gx,gy+size+30,gx+size,gy+2*size+30),label,p["text"])
         center_text(draw,"VALUE",(gx+size+30,gy+size+30,gx+2*size+30,gy+2*size+30),label,p["accent2"])
 
+    elif kind == "architecture":
+        labels = visual_keywords(scene or {})
+        if len(labels) < 3:
+            labels = ["INPUT", "SYSTEM", "OUTPUT"]
+        labels = labels[:3]
+        bw = min(430, (w - 100) / 3)
+        gap = 50
+        start = x + (w - (3*bw + 2*gap))/2
+        by = y + 120
+        for i, text in enumerate(labels):
+            bx = start + i*(bw+gap)
+            rect(draw, (bx, by, bx+bw, by+230), p["panel"], p["accent"], 3, 24)
+            center_text(draw, f"{i+1:02d}", (bx+20,by+18,bx+95,by+85), small, p["accent"])
+            f = ImageFont.truetype(BOLD, 31)
+            center_text(draw, text.upper(), (bx+25,by+85,bx+bw-25,by+185), f, p["text"])
+            if i < 2:
+                draw.line((bx+bw+8, by+115, bx+bw+gap-8, by+115), fill=p["accent2"], width=5)
+                draw.polygon([(bx+bw+gap-8,by+115),(bx+bw+gap-28,by+103),(bx+bw+gap-28,by+127)], fill=p["accent2"])
+
+    elif kind == "steps":
+        labels = visual_keywords(scene or {})
+        labels = (labels + ["CHECK", "RESULT"])[:4]
+        bw = (w - 60) / 2
+        gapx, gapy = 60, 45
+        by = y + 35
+        for i, text in enumerate(labels):
+            row, col = divmod(i, 2)
+            bx = x + col*(bw+gapx)
+            by_i = by + row*(155+gapy)
+            rect(draw, (bx,by_i,bx+bw,by_i+155), p["panel"], p["accent"], 3, 24)
+            center_text(draw, f"{i+1}", (bx+18,by_i+18,bx+80,by_i+75), small, p["accent"])
+            f = ImageFont.truetype(BOLD, 28)
+            center_text(draw, text.upper(), (bx+70,by_i+35,bx+bw-20,by_i+120), f, p["text"])
+
     else:  # quote
         rect(draw,(x+190,y+85,x+w-190,y+h-85),p["panel"],p["accent"],3,32)
         center_text(draw,'“', (x+240,y+100,x+330,y+210), ImageFont.truetype(BOLD,100), p["accent"])
@@ -221,6 +273,8 @@ def make_card(scene, index, title, p, path):
     scene_f = ImageFont.truetype(FONT, 23)
     draw.text((85,82),"uncommonAI",font=top,fill=p["text"])
     draw.text((W-245,85),f"SCENE {index:02d}",font=scene_f,fill=p["muted"])
+    draw.rounded_rectangle((85,118,W-85,128),radius=5,fill=p["panel"])
+    draw.rounded_rectangle((85,118,85+int((W-170)*min(index/8,1.0)),128),radius=5,fill=p["accent"])
 
     title_f = font_fit(draw,title,BOLD,68,42,1580)
     title_lines = wrap(draw,title,title_f,1580,2)
@@ -233,7 +287,7 @@ def make_card(scene, index, title, p, path):
     # Large visual zone; no text is allowed in subtitle zone below 900.
     rect(draw,(90,340,W-90,870),p["panel"],p["accent"],2,30)
     kind=visual_kind(scene.get("visual_type") or scene.get("visual") or scene.get("diagram"),index)
-    draw_visual(draw,kind,(145,385,W-290,450),p)
+    draw_visual(draw,kind,(145,385,W-290,450),p,scene)
 
     # Tiny branded footer only above the subtitle-safe zone.
     draw.line((90,900,W-90,900),fill=p["accent"],width=2)
@@ -282,7 +336,7 @@ def main():
     run(["ffmpeg","-y","-f","concat","-safe","0","-i",str(concat),"-c","copy","-movflags","+faststart",str(OUTPUT)])
     if not OUTPUT.exists() or OUTPUT.stat().st_size==0: raise SystemExit("Final MP4 was not created correctly.")
     subprocess.run(["ffprobe","-v","error","-show_entries","format=duration,size","-show_entries","stream=codec_name,width,height","-of","default=noprint_wrappers=1",str(OUTPUT)],check=True)
-    print(f"V11 VIDEO CREATED: {OUTPUT} | {OUTPUT.stat().st_size} bytes")
+    print(f"V12 VIDEO CREATED: {OUTPUT} | {OUTPUT.stat().st_size} bytes")
 
 if __name__ == "__main__":
     main()
