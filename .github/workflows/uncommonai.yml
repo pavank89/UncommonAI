@@ -75,8 +75,14 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
-        run: pip install feedparser pillow edge-tts
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: |
+          pip install feedparser pillow edge-tts
 
       - name: Extract approved topic
         env:
@@ -111,7 +117,11 @@ jobs:
                   )
 
                   if match:
-                      topic = re.sub(r"\s+", " ", match.group(1)).strip()
+                      topic = re.sub(
+                          r"\s+",
+                          " ",
+                          match.group(1)
+                      ).strip()
                       break
 
           if not topic:
@@ -156,6 +166,17 @@ jobs:
         run: |
           cp .github/workflow/video_renderer.py ./video_renderer.py
 
+      - name: Verify video dependencies
+        run: |
+          echo "FFmpeg:"
+          ffmpeg -version | head -n 1
+          echo ""
+          echo "FFprobe:"
+          ffprobe -version | head -n 1
+          echo ""
+          echo "Edge TTS:"
+          edge-tts --version
+
       - name: Render MP4 video
         env:
           VIDEO_VOICE: en-US-AriaNeural
@@ -165,6 +186,11 @@ jobs:
       - name: Validate MP4
         run: |
           test -s ./workspace/uncommonAI_video.mp4
+
+          echo "========================================"
+          echo "MP4 DETAILS"
+          echo "========================================"
+
           ffprobe -v error \
             -show_entries format=duration,size \
             -of default=noprint_wrappers=1 \
