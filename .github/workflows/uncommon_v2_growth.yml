@@ -50,7 +50,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           UNCOMMONAI_MODE: research
         run: |
-          python .github/workflow/uncommonai_v2.py
+          python .github/workflow/uncommonai_cloud_v2.py
 
       - name: Save research
         uses: actions/upload-artifact@v4
