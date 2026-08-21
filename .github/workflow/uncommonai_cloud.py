@@ -220,6 +220,123 @@ def parse_json(text):
         print("JSON ERROR:", e)
         raise SystemExit("Could not parse Gemini JSON response.")
 
+def long_form_word_count(package):
+    """Count the narration that will actually drive the long-form video."""
+    scenes = package.get("scenes") or []
+    scene_text = " ".join(
+        safe_text(scene.get("narration"))
+        for scene in scenes
+        if isinstance(scene, dict)
+    ).strip()
+
+    # Prefer scene narration because that is what the renderer actually speaks.
+    if scene_text:
+        return len(scene_text.split())
+
+    return len(safe_text(package.get("script")).split())
+
+
+def normalize_long_form_script(package):
+    """
+    Make the package's top-level script agree with the narration used by the
+    renderer and prevent a short Gemini-generated script from reaching the
+    monetization/content-intelligence gate.
+
+    The first pass is deterministic: concatenate the eight approved scene
+    narrations. This avoids the common failure where Gemini generates a short
+    top-level 'script' while the scenes contain the real narration.
+    """
+    scenes = package.get("scenes") or []
+    combined = "\n\n".join(
+        safe_text(scene.get("narration"))
+        for scene in scenes
+        if isinstance(scene, dict) and safe_text(scene.get("narration"))
+    ).strip()
+
+    if combined:
+        package["script"] = combined
+
+    return long_form_word_count(package)
+
+
+def expand_short_long_form(package, topic, current_words):
+    """
+    Ask Gemini to expand ONLY the existing scene narration.
+
+    This is a repair path, not a second story generation path. It preserves
+    the approved topic, scene structure, visual prompts and labels.
+    """
+    scenes = package.get("scenes") or []
+
+    prompt = f"""
+You are repairing an already-approved long-form YouTube production package.
+
+APPROVED TOPIC:
+{topic}
+
+CURRENT NARRATION WORD COUNT:
+{current_words}
+
+The current package is too short for a 7-10 minute documentary-style video.
+
+Return VALID JSON ONLY with this exact structure:
+{{
+  "scenes": [
+    {{
+      "narration": "..."
+    }}
+  ]
+}}
+
+There must be exactly 8 scene objects, in the same order.
+
+Rules:
+- Preserve the existing story, thesis, facts, evidence and scene order.
+- Expand the narration to a total of 1,200-1,500 words.
+- Target roughly 150-190 words per scene.
+- Do NOT invent statistics, quotes, benchmarks, demonstrations, capabilities,
+  sources or facts.
+- Add useful explanation, mechanism, context, implications, limitations and
+  interpretation supported by the existing package.
+- Do not add generic filler such as "in today's video", "let's dive in",
+  "as we all know", or repetitive conclusions.
+- Keep the narration natural for spoken documentary delivery.
+- Do not change visual_prompt, visual_type, key_phrase or visual_labels.
+
+CURRENT SCENES:
+{json.dumps(
+    [{"narration": safe_text(s.get("narration"))} for s in scenes],
+    indent=2
+)}
+"""
+
+    repaired = parse_json(gemini_generate(prompt))
+
+    repaired_scenes = repaired.get("scenes") if isinstance(repaired, dict) else None
+    if not isinstance(repaired_scenes, list) or len(repaired_scenes) != 8:
+        raise SystemExit(
+            "Long-form repair returned an invalid scene structure."
+        )
+
+    for i, repaired_scene in enumerate(repaired_scenes):
+        narration = safe_text(
+            repaired_scene.get("narration") if isinstance(repaired_scene, dict)
+            else ""
+        )
+        if not narration:
+            raise SystemExit(
+                f"Long-form repair returned empty narration for scene {i + 1}."
+            )
+        scenes[i]["narration"] = narration
+
+    package["scenes"] = scenes
+    package["script"] = "\n\n".join(
+        safe_text(scene["narration"]) for scene in scenes
+    )
+
+    return long_form_word_count(package)
+
+
 def build_package(topic):
     prompt = f"""
 You are the senior editorial producer for the faceless YouTube channel uncommonAI.
@@ -231,6 +348,13 @@ APPROVED TOPIC:
 {topic}
 
 Create exactly ONE original 7-10 minute YouTube video package.
+
+LONG-FORM LENGTH REQUIREMENT:
+- The final long-form narration MUST contain at least 1,200 words.
+- Target 1,250-1,500 words.
+- Each of the 8 scenes should normally contain 130-200 words of narration.
+- Do not pad with generic filler. Add real explanation, mechanism, evidence,
+  implications, limitations and useful commentary.
 
 ==================== ORIGINALITY ====================
 Build a clear original thesis around the approved topic.
@@ -575,6 +699,44 @@ Schema:
             f"{unique_visual_types} unique visual types across 8 scenes. "
             "At least 5 are required."
         )
+
+    # ================================================================
+    # LONG-FORM LENGTH SAFEGUARD
+    # ================================================================
+    # The renderer speaks scene narration. Keep package["script"] synchronized
+    # with those scenes so content-intelligence never evaluates a stale or
+    # unusually short Gemini top-level script.
+    package["scenes"] = scenes
+    package["shorts"] = shorts
+
+    word_count = normalize_long_form_script(package)
+    print(f"Long-form narration word count: {word_count}")
+
+    if word_count < 1200:
+        print(
+            f"Long-form narration is short ({word_count} words). "
+            "Running controlled expansion repair..."
+        )
+        word_count = expand_short_long_form(
+            package,
+            APPROVED_TOPIC,
+            word_count,
+        )
+        print(f"Long-form narration after repair: {word_count}")
+
+    if word_count < 1200:
+        raise SystemExit(
+            "Long-form narration is still too short after repair: "
+            f"{word_count} words. Minimum is 1200."
+        )
+
+    if word_count > 1800:
+        print(
+            f"Warning: long-form narration is {word_count} words. "
+            "It may render longer than the 7-10 minute target."
+        )
+
+    # ================================================================
 
     phrases = [safe_text(s.get("key_phrase")).lower() for s in scenes]
     if len(set(phrases)) < 6:
