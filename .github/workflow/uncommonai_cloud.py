@@ -189,32 +189,56 @@ def gemini_generate(prompt):
 def parse_json(text):
     text = text.strip()
 
-    # Remove Markdown code fences
-    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I)
+    # Remove Markdown code fences if Gemini adds them.
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\s*```$", "", text)
 
-    # Normal JSON
+    # First try normal JSON parsing.
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
 
-    # Extract the first complete JSON object
+    # Try to locate the outermost JSON object.
     start = text.find("{")
-    if start == -1:
+    end = text.rfind("}")
+
+    if start == -1 or end == -1 or end <= start:
         print("GEMINI RESPONSE:")
-        print(text[:8000])
+        print(text[:10000])
         raise SystemExit("Gemini did not return a JSON object.")
 
+    candidate = text[start:end + 1]
+
+    # Try the extracted object directly.
     try:
-        decoder = json.JSONDecoder()
-        result, _ = decoder.raw_decode(text[start:])
-        return result
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        pass
+
+    # Common Gemini problem: Markdown links inside JSON strings.
+    # Convert [text](https://example.com) into https://example.com.
+    candidate = re.sub(
+        r"\[([^\]]+)\]\((https?://[^)\s]+)\)",
+        r"\2",
+        candidate
+    )
+
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        pass
+
+    # Print the exact response so we can diagnose any remaining problem.
+    print("INVALID GEMINI JSON:")
+    print(text[:15000])
+    print("JSON ERROR:")
+    try:
+        json.loads(candidate)
     except json.JSONDecodeError as e:
-        print("INVALID GEMINI JSON:")
-        print(text[:8000])
-        print("JSON ERROR:", e)
-        raise SystemExit("Could not parse Gemini JSON response.")
+        print(e)
+
+    raise SystemExit("Could not parse Gemini JSON response.")
 
 def build_package(topic):
     prompt = f"""
