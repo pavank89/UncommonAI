@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -9,33 +8,26 @@ from pathlib import Path
 
 ROOT = Path.cwd()
 WORK = ROOT / "workspace"
-VIDEO_DIR = WORK / "video"
-VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+SHORT_DIR = WORK / "shorts"
+PACKAGE = WORK / "production_package.json"
+SHORT_DIR.mkdir(parents=True, exist_ok=True)
 
-PACKAGE_FILE = WORK / "production_package.json"
-OUTPUT = WORK / "uncommonAI_video.mp4"
+VOICE = "en-US-AriaNeural"
 
-VOICE = os.getenv("VIDEO_VOICE", "en-US-AriaNeural")
 
 def run(cmd):
     print("RUN:", " ".join(str(x) for x in cmd))
     subprocess.run(cmd, check=True)
 
+
 def safe_text(value):
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
+
 def make_srt(text, duration, path):
-    words = safe_text(text).split()
-    if not words:
-        words = ["uncommonAI"]
-
-    # Approximate word timing; captions are intentionally simple and robust.
-    chunks = []
-    for i in range(0, len(words), 10):
-        chunks.append(" ".join(words[i:i + 10]))
-
-    total = max(float(duration), 1.0)
-    slot = total / len(chunks)
+    words = safe_text(text).split() or ["uncommonAI"]
+    chunks = [" ".join(words[i:i + 8]) for i in range(0, len(words), 8)]
+    slot = max(float(duration), 1.0) / len(chunks)
 
     def stamp(seconds):
         ms = int(round(seconds * 1000))
@@ -44,152 +36,99 @@ def make_srt(text, duration, path):
         s, ms = divmod(ms, 1000)
         return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
-    lines = []
+    out = []
     for i, chunk in enumerate(chunks, 1):
-        start = i - 1
-        end = i
-        lines += [str(i), f"{stamp(start * slot)} --> {stamp(end * slot)}", chunk, ""]
-    path.write_text("\n".join(lines), encoding="utf-8")
+        out += [str(i), f"{stamp((i-1)*slot)} --> {stamp(i*slot)}", chunk, ""]
+    path.write_text("\n".join(out), encoding="utf-8")
 
-def make_card(title, scene_number, narration, path):
+
+def make_card(topic, title, number, script, path):
     from PIL import Image, ImageDraw, ImageFont
 
-    W, H = 1920, 1080
+    W, H = 1080, 1920
     img = Image.new("RGB", (W, H), (14, 17, 23))
     draw = ImageDraw.Draw(img)
+    bold = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)
+    title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 62)
+    normal = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 38)
+    small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 25)
 
-    font_paths = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    ]
-    bold = ImageFont.truetype(font_paths[0], 64)
-    normal = ImageFont.truetype(font_paths[1], 34)
-    small = ImageFont.truetype(font_paths[1], 25)
+    draw.rectangle((45, 45, W-45, H-45), outline=(70, 78, 92), width=3)
+    draw.text((75, 85), "uncommonAI", font=bold, fill=(235, 238, 245))
+    draw.text((75, 155), f"SHORT {number}", font=small, fill=(145, 154, 170))
 
-    # Minimal branded layout; no copyrighted visual assets.
-    draw.rectangle((80, 80, 1840, 1000), outline=(70, 78, 92), width=3)
-    draw.text((120, 115), "uncommonAI", font=bold, fill=(235, 238, 245))
-    draw.text((120, 205), f"SCENE {scene_number}", font=small, fill=(145, 154, 170))
-    draw.text((120, 255), title[:80], font=bold, fill=(245, 245, 248))
+    y = 230
+    for line in textwrap.wrap(safe_text(title), width=25)[:5]:
+        draw.text((75, y), line, font=title_font, fill=(245, 245, 248))
+        y += 78
 
-    wrapped = textwrap.wrap(safe_text(narration), width=72)
-    y = 390
-    for line in wrapped[:10]:
-        draw.text((125, y), line, font=normal, fill=(215, 219, 228))
-        y += 52
+    draw.text((75, y + 45), "QUICK TAKE", font=small, fill=(145, 154, 170))
+    y += 105
+    for line in textwrap.wrap(safe_text(script), width=38)[:16]:
+        draw.text((75, y), line, font=normal, fill=(215, 219, 228))
+        y += 55
 
-    draw.text(
-        (125, 930),
-        "AI-assisted research • original commentary • uncommonAI",
-        font=small,
-        fill=(130, 138, 153),
-    )
+    draw.text((75, H-120), safe_text(topic)[:85], font=small, fill=(130, 138, 153))
     img.save(path, quality=95)
 
+
 def main():
-    if not PACKAGE_FILE.exists():
-        raise SystemExit(f"Missing {PACKAGE_FILE}")
+    if not PACKAGE.exists():
+        raise SystemExit(f"Missing {PACKAGE}")
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe") or not shutil.which("edge-tts"):
+        raise SystemExit("ffmpeg, ffprobe and edge-tts are required.")
 
-    package = json.loads(PACKAGE_FILE.read_text(encoding="utf-8"))
-    title = safe_text(package.get("chosen_title", "uncommonAI"))
+    package = json.loads(PACKAGE.read_text(encoding="utf-8"))
+    shorts = package.get("shorts", [])
+    if len(shorts) != 3:
+        raise SystemExit(f"Expected 3 Shorts, found {len(shorts)}")
 
-    scenes = package.get("scenes", [])
-    if len(scenes) != 8:
-        raise SystemExit(f"Expected 8 scenes, found {len(scenes)}")
+    topic = safe_text(package.get("chosen_title", "uncommonAI"))
+    manifest = []
 
-    # Edge TTS is used for a natural neural voice without requiring another API key.
-    if not shutil.which("ffmpeg"):
-        raise SystemExit("ffmpeg is not installed.")
-    if not shutil.which("edge-tts"):
-        raise SystemExit("edge-tts is not installed.")
+    for i, short in enumerate(shorts, 1):
+        title = safe_text(short.get("title"))
+        script = safe_text(short.get("script"))
+        if not title or not script:
+            raise SystemExit(f"Short {i} is missing title or script.")
 
-    segments = []
+        audio = SHORT_DIR / f"short_{i:02d}.mp3"
+        image = SHORT_DIR / f"short_{i:02d}.png"
+        srt = SHORT_DIR / f"short_{i:02d}.srt"
+        video = SHORT_DIR / f"short_{i:02d}.mp4"
 
-    for i, scene in enumerate(scenes, 1):
-        narration = safe_text(scene.get("narration"))
-        if not narration:
-            raise SystemExit(f"Scene {i} has no narration.")
+        run(["edge-tts", "--voice", VOICE, "--text", script, "--write-media", str(audio)])
+        duration = float(subprocess.check_output([
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", str(audio)
+        ], text=True).strip())
 
-        audio = VIDEO_DIR / f"scene_{i:02d}.mp3"
-        image = VIDEO_DIR / f"scene_{i:02d}.png"
-        srt = VIDEO_DIR / f"scene_{i:02d}.srt"
-        segment = VIDEO_DIR / f"segment_{i:02d}.mp4"
+        if duration > 59.5:
+            raise SystemExit(f"Short {i} is {duration:.1f}s; keep Shorts under 60s for this pipeline.")
 
-        run([
-            "edge-tts",
-            "--voice", VOICE,
-            "--text", narration,
-            "--write-media", str(audio),
-        ])
-
-        # Obtain the generated audio duration.
-        probe = subprocess.check_output([
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            str(audio)
-        ], text=True).strip()
-        duration = float(probe)
-
-        make_card(title, i, narration, image)
-        make_srt(narration, duration, srt)
-
-        # Burn captions directly into the scene. The subtitles file is generated
-        # from the exact narration, so it remains synchronized with the voice.
+        make_card(topic, title, i, script, image)
+        make_srt(script, duration, srt)
         subtitle_path = str(srt).replace("\\", "/").replace(":", "\\:")
-        vf = (
-            f"subtitles='{subtitle_path}':"
-            "force_style='FontName=DejaVu Sans,FontSize=22,"
-            "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
-            "Outline=2,Shadow=1,Alignment=2,MarginV=55'"
-        )
+        vf = (f"subtitles='{subtitle_path}':force_style="
+              "'FontName=DejaVu Sans,FontSize=20,PrimaryColour=&H00FFFFFF,"
+              "OutlineColour=&H00000000,Outline=2,Shadow=1,Alignment=2,MarginV=90'")
 
         run([
-            "ffmpeg", "-y",
-            "-loop", "1",
-            "-i", str(image),
-            "-i", str(audio),
-            "-vf", vf,
-            "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-tune", "stillimage",
-            "-pix_fmt", "yuv420p",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-shortest",
-            "-t", str(duration),
-            str(segment),
+            "ffmpeg", "-y", "-loop", "1", "-i", str(image), "-i", str(audio),
+            "-vf", vf, "-c:v", "libx264", "-preset", "veryfast",
+            "-tune", "stillimage", "-pix_fmt", "yuv420p", "-c:a", "aac",
+            "-b:a", "128k", "-shortest", "-t", str(duration),
+            "-movflags", "+faststart", str(video)
         ])
 
-        segments.append(segment)
+        manifest.append({"index": i, "title": title, "script": script,
+                         "file": str(video), "duration": round(duration, 2)})
 
-    concat_file = VIDEO_DIR / "segments.txt"
-    concat_file.write_text(
-        "\n".join(f"file '{p.resolve()}'" for p in segments),
-        encoding="utf-8",
-    )
+    (SHORT_DIR / "shorts_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    print("SHORTS CREATED")
+    for item in manifest:
+        print(f"{item['index']}: {item['title']} -> {item['file']} ({item['duration']}s)")
 
-    run([
-        "ffmpeg", "-y",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", str(concat_file),
-        "-c", "copy",
-        "-movflags", "+faststart",
-        str(OUTPUT),
-    ])
-
-    # Basic output validation.
-    subprocess.run([
-        "ffprobe", "-v", "error",
-        "-show_entries", "format=duration",
-        "-show_entries", "stream=codec_name",
-        "-of", "default=noprint_wrappers=1",
-        str(OUTPUT),
-    ], check=True)
-
-    print(f"VIDEO CREATED: {OUTPUT}")
-    print(f"SIZE BYTES: {OUTPUT.stat().st_size}")
 
 if __name__ == "__main__":
     main()
