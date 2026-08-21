@@ -8,9 +8,9 @@ from pathlib import Path
 
 ROOT = Path.cwd()
 WORK = ROOT / "workspace"
-VIDEO_DIR = WORK / "video"
 SHORTS_DIR = WORK / "shorts"
 PACKAGE_FILE = WORK / "production_package.json"
+MANIFEST_FILE = SHORTS_DIR / "shorts_manifest.json"
 
 SHORTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -40,9 +40,19 @@ def make_card(title, short_number, narration, path):
     normal = ImageFont.truetype(normal_path, 38)
     small = ImageFont.truetype(normal_path, 27)
 
-    draw.rectangle((45, 45, W - 45, H - 45), outline=(70, 78, 92), width=3)
+    draw.rectangle(
+        (45, 45, W - 45, H - 45),
+        outline=(70, 78, 92),
+        width=3,
+    )
 
-    draw.text((75, 85), "uncommonAI", font=bold, fill=(235, 238, 245))
+    draw.text(
+        (75, 85),
+        "uncommonAI",
+        font=bold,
+        fill=(235, 238, 245),
+    )
+
     draw.text(
         (75, 175),
         f"SHORT {short_number}",
@@ -53,15 +63,24 @@ def make_card(title, short_number, narration, path):
     wrapped_title = textwrap.wrap(title[:100], width=27)
     y = 260
     for line in wrapped_title[:4]:
-        draw.text((75, y), line, font=bold, fill=(245, 245, 248))
+        draw.text(
+            (75, y),
+            line,
+            font=bold,
+            fill=(245, 245, 248),
+        )
         y += 72
 
     wrapped = textwrap.wrap(narration, width=39)
     y = 650
 
-    # Keep the text comfortably inside the vertical frame.
     for line in wrapped[:20]:
-        draw.text((75, y), line, font=normal, fill=(215, 219, 228))
+        draw.text(
+            (75, y),
+            line,
+            font=normal,
+            fill=(215, 219, 228),
+        )
         y += 54
 
     draw.text(
@@ -94,6 +113,7 @@ def audio_duration(audio):
 
 def make_srt(text, duration, path):
     words = safe_text(text).split()
+
     if not words:
         words = ["uncommonAI"]
 
@@ -112,9 +132,11 @@ def make_srt(text, duration, path):
         return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
     lines = []
+
     for i, chunk in enumerate(chunks, 1):
         start = (i - 1) * slot
         end = i * slot
+
         lines.extend(
             [
                 str(i),
@@ -124,7 +146,10 @@ def make_srt(text, duration, path):
             ]
         )
 
-    path.write_text("\n".join(lines), encoding="utf-8")
+    path.write_text(
+        "\n".join(lines),
+        encoding="utf-8",
+    )
 
 
 def render_short(short_number, title, narration):
@@ -147,10 +172,24 @@ def render_short(short_number, title, narration):
 
     duration = audio_duration(audio)
 
-    make_card(title, short_number, narration, image)
-    make_srt(narration, duration, srt)
+    make_card(
+        title,
+        short_number,
+        narration,
+        image,
+    )
 
-    subtitle_path = str(srt).replace("\\", "/").replace(":", "\\:")
+    make_srt(
+        narration,
+        duration,
+        srt,
+    )
+
+    subtitle_path = (
+        str(srt)
+        .replace("\\", "/")
+        .replace(":", "\\:")
+    )
 
     vf = (
         f"subtitles='{subtitle_path}':"
@@ -193,10 +232,14 @@ def render_short(short_number, title, narration):
     )
 
     if not output.exists() or output.stat().st_size == 0:
-        raise SystemExit(f"Short {short_number} was not created correctly.")
+        raise SystemExit(
+            f"Short {short_number} was not created correctly."
+        )
 
     print(f"SHORT CREATED: {output}")
     print(f"SIZE BYTES: {output.stat().st_size}")
+
+    return output
 
 
 def main():
@@ -216,7 +259,7 @@ def main():
         PACKAGE_FILE.read_text(encoding="utf-8")
     )
 
-    title = safe_text(
+    base_title = safe_text(
         package.get("chosen_title", "uncommonAI")
     )
 
@@ -227,14 +270,13 @@ def main():
             f"Expected at least 3 scenes for Shorts, found {len(scenes)}"
         )
 
-    # Always start with a clean Shorts directory so an old run cannot
-    # interfere with the current run.
+    # Remove files from a previous Shorts run.
     for item in SHORTS_DIR.iterdir():
         if item.is_file():
             item.unlink()
 
-    # Use the first three production scenes as the three Shorts.
-    # This keeps the Shorts tied directly to the same approved topic.
+    manifest = []
+
     for short_number, scene in enumerate(scenes[:3], 1):
         narration = safe_text(scene.get("narration"))
 
@@ -243,18 +285,64 @@ def main():
                 f"Scene {short_number} has no narration."
             )
 
-        # Keep Shorts reasonably concise. The complete narration is retained
-        # unless it is exceptionally long.
+        # Keep each Short concise.
         words = narration.split()
-        if len(words) > 75:
-            narration = " ".join(words[:75]).rstrip(" ,.;:") + "."
 
-        render_short(short_number, title, narration)
+        if len(words) > 75:
+            narration = (
+                " ".join(words[:75])
+                .rstrip(" ,.;:")
+                + "."
+            )
+
+        scene_title = safe_text(
+            scene.get("title")
+            or scene.get("heading")
+            or scene.get("hook")
+        )
+
+        if scene_title:
+            short_title = scene_title
+        else:
+            short_title = f"{base_title} — Short {short_number}"
+
+        output = render_short(
+            short_number,
+            base_title,
+            narration,
+        )
+
+        # The uploader runs from the repository root, so use a path
+        # relative to the root exactly as its Path(item["file"]) expects.
+        manifest.append(
+            {
+                "index": short_number,
+                "title": short_title[:100],
+                "script": narration,
+                "file": str(output).replace("\\", "/"),
+            }
+        )
+
+    MANIFEST_FILE.write_text(
+        json.dumps(
+            manifest,
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    print("===== SHORTS MANIFEST =====")
+    print(MANIFEST_FILE)
+    print(MANIFEST_FILE.read_text(encoding="utf-8"))
 
     print("===== SHORTS CREATED =====")
+
     for number in range(1, 4):
         path = SHORTS_DIR / f"short_{number:02d}.mp4"
-        print(f"{path} | {path.stat().st_size} bytes")
+        print(
+            f"{path} | {path.stat().st_size} bytes"
+        )
 
 
 if __name__ == "__main__":
