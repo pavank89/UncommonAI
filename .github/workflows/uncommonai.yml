@@ -82,7 +82,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          pip install feedparser pillow edge-tts
+          pip install feedparser pillow edge-tts google-auth google-api-python-client
 
       - name: Extract approved topic
         env:
@@ -101,27 +101,15 @@ jobs:
               topic = dispatch_topic
           else:
               body = os.environ["ISSUE_BODY"]
-
               patterns = [
                   r"##\s+Recommended topic\s*\n\s*\*\*(.+?)\*\*",
                   r"##\s+Recommended YouTube concept\s*\n\s*\*\*(.+?)\*\*",
               ]
-
               topic = None
-
               for pattern in patterns:
-                  match = re.search(
-                      pattern,
-                      body,
-                      re.IGNORECASE | re.DOTALL
-                  )
-
+                  match = re.search(pattern, body, re.IGNORECASE | re.DOTALL)
                   if match:
-                      topic = re.sub(
-                          r"\s+",
-                          " ",
-                          match.group(1)
-                      ).strip()
+                      topic = re.sub(r"\s+", " ", match.group(1)).strip()
                       break
 
           if not topic:
@@ -130,7 +118,6 @@ jobs:
               )
 
           print(f"Approved topic: {topic}")
-
           with open("/tmp/topic.txt", "w", encoding="utf-8") as f:
               f.write(topic)
           PY
@@ -147,12 +134,9 @@ jobs:
 
       - name: Debug production workspace
         run: |
-          echo "========================================"
-          echo "WORKSPACE"
-          echo "========================================"
           pwd
-          ls -la ./workspace/ || true
-          find ./workspace -maxdepth 3 -type f -print 2>/dev/null || true
+          ls -la ./workspace/
+          find ./workspace -maxdepth 3 -type f -print
 
       - name: Save production package
         uses: actions/upload-artifact@v4
@@ -168,13 +152,8 @@ jobs:
 
       - name: Verify video dependencies
         run: |
-          echo "FFmpeg:"
           ffmpeg -version | head -n 1
-          echo ""
-          echo "FFprobe:"
           ffprobe -version | head -n 1
-          echo ""
-          echo "Edge TTS:"
           edge-tts --version
 
       - name: Render MP4 video
@@ -186,11 +165,6 @@ jobs:
       - name: Validate MP4
         run: |
           test -s ./workspace/uncommonAI_video.mp4
-
-          echo "========================================"
-          echo "MP4 DETAILS"
-          echo "========================================"
-
           ffprobe -v error \
             -show_entries format=duration,size \
             -of default=noprint_wrappers=1 \
@@ -203,6 +177,12 @@ jobs:
           path: ./workspace/uncommonAI_video.mp4
           retention-days: 7
           if-no-files-found: error
+
+      - name: Upload video to YouTube
+        env:
+          YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+        run: |
+          python .github/workflow/youtube_uploader.py
 
       - name: Save video production files
         uses: actions/upload-artifact@v4
@@ -217,7 +197,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue comment ${{ github.event.issue.number }} --body "✅ Production package and MP4 video are ready. Download the **uncommonai-video** artifact and review it before any publishing step. No YouTube video has been published."
+          gh issue comment ${{ github.event.issue.number }} --body "✅ Production package, MP4, and YouTube upload are complete. The video has been published to YouTube."
 
   final_approval:
     if: github.event_name == 'issue_comment' && github.event.issue.pull_request == null && contains(github.event.comment.body, 'PUBLISH') && contains(github.event.issue.body, '<!-- uncommonai-topic-approval -->')
@@ -228,4 +208,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue comment ${{ github.event.issue.number }} --body "✅ PUBLISH approval received. YouTube publishing remains disabled until the separate OAuth/publishing step is configured. No video has been published by this workflow."
+          gh issue comment ${{ github.event.issue.number }} --body "PUBLISH approval was received. The current workflow publishes during the production run; this job is retained for compatibility."
