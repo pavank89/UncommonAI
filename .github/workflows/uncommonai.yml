@@ -79,7 +79,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
-          pip install pillow edge-tts google-auth google-api-python-client
+          pip install feedparser pillow edge-tts google-auth google-api-python-client
 
       - name: Extract approved topic
         env:
