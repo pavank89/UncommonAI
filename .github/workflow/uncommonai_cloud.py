@@ -2,9 +2,12 @@ import os, json, re, urllib.request
 from pathlib import Path
 import feedparser
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path.cwd()
 WORK = ROOT / "workspace"
-WORK.mkdir(exist_ok=True)
+WORK.mkdir(parents=True, exist_ok=True)
+
+print(f"ROOT: {ROOT}")
+print(f"WORK: {WORK}")
 
 MODE = os.getenv("UNCOMMONAI_MODE", "research").lower()
 APPROVED_TOPIC = os.getenv("APPROVED_TOPIC", "").strip()
