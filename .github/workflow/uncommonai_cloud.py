@@ -261,17 +261,41 @@ def normalize_long_form_script(package):
 
 def expand_short_long_form(package, topic, current_words):
     """
-    Iteratively expand the existing 8-scene narration until it clears the
-    production minimum. This is intentionally a repair loop rather than a
-    second story-generation pass.
+    Robust long-form repair pipeline.
+
+    Stage 1:
+      Up to 3 substantive repairs, asking Gemini to improve the existing
+      narration while targeting the full 8-scene structure.
+
+    Stage 2:
+      A final targeted micro-expansion asks Gemini to expand ONLY scenes below
+      the per-scene floor. This avoids rewriting an already-good 1,100+ word
+      script just to gain the last few dozen words.
     """
     scenes = package.get("scenes") or []
 
-    for attempt in range(1, 4):
-        current_scene_words = [
+    def scene_counts():
+        return [
             len(safe_text(scene.get("narration")).split())
             for scene in scenes
         ]
+
+    def total_words():
+        package["script"] = "\n\n".join(
+            safe_text(scene.get("narration"))
+            for scene in scenes
+        )
+        return long_form_word_count(package)
+
+    # ------------------------------------------------------------
+    # Stage 1: substantive repair, maximum 3 attempts
+    # ------------------------------------------------------------
+    for attempt in range(1, 4):
+        counts = scene_counts()
+        total = sum(counts)
+
+        if total >= 1200 and min(counts) >= 145:
+            return total
 
         prompt = f"""
 You are repairing an already-approved long-form YouTube production package.
@@ -280,13 +304,13 @@ APPROVED TOPIC:
 {topic}
 
 CURRENT TOTAL WORD COUNT:
-{sum(current_scene_words)}
+{total}
 
 CURRENT WORD COUNTS BY SCENE:
-{current_scene_words}
+{counts}
 
-This is a 7-10 minute technology documentary. The current narration is too
-short and MUST be expanded.
+This is a 7-10 minute technology documentary. Expand the existing narration
+while preserving the story.
 
 Return VALID JSON ONLY:
 {{
@@ -302,24 +326,17 @@ Return VALID JSON ONLY:
   ]
 }}
 
-NON-NEGOTIABLE LENGTH REQUIREMENTS:
+NON-NEGOTIABLE:
 - Exactly 8 scenes.
-- TOTAL narration: 1,250-1,500 words.
-- EACH scene: at least 145 words.
-- Aim for 155-185 words per scene.
-- Do not merely add adjectives or repeat sentences.
-- Every scene must add useful spoken explanation.
-
-CONTENT REQUIREMENTS:
-- Preserve the existing thesis, facts, evidence, topic and story order.
-- Expand with mechanism, context, concrete implications, limitations,
-  interpretation and transitions where supported by the existing story.
-- Do NOT invent statistics, quotes, benchmarks, tests, demonstrations,
-  capabilities, companies, events or sources.
-- Do NOT use generic filler such as "in today's video", "let's dive in",
-  "as we all know", "the future is here", or repetitive conclusions.
-- Make it sound like an intelligent human technology documentary narrator.
-- Do not modify any visual metadata; return narration only.
+- Target 1,250-1,500 total spoken words.
+- Every scene should be at least 145 words.
+- Prefer 155-185 words per scene.
+- Preserve existing facts, thesis, evidence and scene order.
+- Add useful explanation, mechanisms, implications, limitations and
+  interpretation.
+- Do not invent statistics, quotes, benchmarks, tests, sources or capabilities.
+- Do not add generic filler or repetitive conclusions.
+- Do not modify visual metadata; return narration only.
 
 CURRENT SCENES:
 {json.dumps(
@@ -351,22 +368,108 @@ CURRENT SCENES:
         if not valid:
             continue
 
-        package["scenes"] = scenes
-        package["script"] = "\n\n".join(
-            safe_text(scene["narration"]) for scene in scenes
-        )
-
-        total = long_form_word_count(package)
-        counts = [len(safe_text(s["narration"]).split()) for s in scenes]
+        total = total_words()
+        counts = scene_counts()
         print(
             f"Long-form repair attempt {attempt}: "
             f"{total} total words; per-scene={counts}"
         )
 
-        if total >= 1200 and min(counts) >= 145:
-            return total
+    # ------------------------------------------------------------
+    # Stage 2: targeted micro-expansion
+    # ------------------------------------------------------------
+    counts = scene_counts()
+    total = total_words()
 
-    return long_form_word_count(package)
+    if total >= 1200 and min(counts) >= 145:
+        return total
+
+    short_indices = [
+        i for i, count in enumerate(counts) if count < 145
+    ]
+
+    if short_indices:
+        target_total = max(1250, total)
+        needed = max(
+            sum(max(0, 145 - counts[i]) for i in short_indices),
+            target_total - total,
+        )
+
+        # Give the model a bounded request: only expand short scenes.
+        target_per_scene = {
+            i + 1: max(150, counts[i] + 20)
+            for i in short_indices
+        }
+
+        prompt = f"""
+Perform a FINAL MICRO-EXPANSION of an already-developed YouTube documentary.
+
+APPROVED TOPIC:
+{topic}
+
+CURRENT TOTAL:
+{total} words
+
+CURRENT SCENE WORD COUNTS:
+{counts}
+
+ONLY THESE SCENES NEED EXPANSION:
+{[i + 1 for i in short_indices]}
+
+Return VALID JSON ONLY:
+{{
+  "scenes": [
+    {{"scene": 1, "narration": "..."}},
+    {{"scene": 2, "narration": "..."}},
+    {{"scene": 3, "narration": "..."}},
+    {{"scene": 4, "narration": "..."}},
+    {{"scene": 5, "narration": "..."}},
+    {{"scene": 6, "narration": "..."}},
+    {{"scene": 7, "narration": "..."}},
+    {{"scene": 8, "narration": "..."}}
+  ]
+}}
+
+MICRO-EXPANSION RULES:
+- Keep every scene's existing meaning and facts.
+- For scenes NOT listed above, return their narration UNCHANGED.
+- For listed scenes, expand naturally to approximately these word counts:
+{json.dumps(target_per_scene)}
+- Add concrete explanation, mechanism, implication or limitation.
+- Do not invent facts, numbers, quotes, sources or capabilities.
+- Do not rewrite the entire story.
+- Do not add filler or repetitive sentences.
+- The final package must have at least 1,200 total words and every scene
+  should be at least 145 words.
+
+CURRENT SCENES:
+{json.dumps(
+    [{"scene": i + 1, "narration": safe_text(s.get("narration"))}
+     for i, s in enumerate(scenes)],
+    indent=2
+)}
+"""
+
+        repaired = parse_json(gemini_generate(prompt))
+        repaired_scenes = repaired.get("scenes") if isinstance(repaired, dict) else None
+
+        if isinstance(repaired_scenes, list) and len(repaired_scenes) == 8:
+            for i, repaired_scene in enumerate(repaired_scenes):
+                narration = safe_text(
+                    repaired_scene.get("narration")
+                    if isinstance(repaired_scene, dict) else ""
+                )
+                if narration:
+                    scenes[i]["narration"] = narration
+
+            total = total_words()
+            counts = scene_counts()
+            print(
+                "Long-form micro-expansion: "
+                f"{total} total words; per-scene={counts}"
+            )
+
+    return total_words()
 
 
 
@@ -763,7 +866,8 @@ Schema:
             for scene in package.get("scenes", [])
         ]
         raise SystemExit(
-            "Long-form narration is still too short after 3 repair attempts: "
+            "Long-form narration failed the final quality gate after "
+            "substantive repair + targeted micro-expansion: "
             f"{word_count} words. Minimum is 1200. "
             f"Scene word counts: {scene_counts}"
         )
