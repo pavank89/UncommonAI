@@ -407,22 +407,52 @@ def render_scene(index, scene, title, p):
     make_card(scene,index,scene_title,p,image,visual_layer)
     make_ass(narration,duration,ass)
     ass_path=str(ass).replace("\\","/").replace(":","\\:").replace("'","\\'")
-    # V14 animation: gentle camera drift + visual-layer reveal + accent sweep.
+    # V14.2 animation: use the visual PNG as a real looping FFmpeg input.
+    # The previous movie-filter approach could silently produce an empty
+    # overlay on GitHub runners. A dedicated -loop 1 input is deterministic.
     # Subtitles are applied last so motion never disturbs the subtitle-safe zone.
-    base=("scale=1970:1108,"
-          "zoompan=z='1.0+0.018*min(on/(30*2.5),1)':"
-          "x='iw/2-(iw/zoom/2)+6*sin(on/55)':"
-          "y='ih/2-(ih/zoom/2)+4*cos(on/63)':d=1:s=1920x1080:fps=30")
-    vf=(base+","
-        f"movie='{str(visual_layer).replace(chr(92),'/').replace(':','\\:')}':loop=1[v];"
-        "[v]format=rgba,fade=t=in:st=0:d=0.55:alpha=1,"
+    base=(
+        "scale=1970:1108,"
+        "zoompan=z='1.0+0.018*min(on/(30*2.5),1)':"
+        "x='iw/2-(iw/zoom/2)+6*sin(on/55)':"
+        "y='ih/2-(ih/zoom/2)+4*cos(on/63)':"
+        "d=1:s=1920x1080:fps=30"
+        "[base]"
+    )
+    vf=(
+        f"[0:v]{base};"
+        "[2:v]format=rgba,setpts=PTS-STARTPTS,"
+        "fade=t=in:st=0:d=0.55:alpha=1,"
         "scale=1970:1108[vl];"
-        "[0:v][vl]overlay=x=0:y='if(lt(t,0.55),28*(1-t/0.55),0)':format=auto,"
-        "drawbox=x='if(lt(t,0.9),80+(iw-240)*t/0.9,iw-160)':y=126:w=120:h=4:"
-        "color=white@0.45:t=fill,"
+        "[base][vl]"
+        "overlay=x=0:y='if(lt(t,0.55),28*(1-t/0.55),0)':"
+        "format=auto[composite];"
+        "[composite]"
+        "drawbox="
+        "x='if(lt(t,0.9),80+(iw-240)*t/0.9,iw-160)':"
+        "y=126:w=120:h=4:color=white@0.45:t=fill,"
         "fade=t=in:st=0:d=0.25,"
-        f"subtitles='{ass_path}'[vout]")
-    run(["ffmpeg","-y","-loop","1","-i",str(image),"-i",str(audio),"-filter_complex",vf,"-map","[vout]","-map","1:a","-c:v","libx264","-preset","veryfast","-tune","stillimage","-pix_fmt","yuv420p","-c:a","aac","-b:a","192k","-shortest","-t",str(duration),"-movflags","+faststart",str(out)])
+        f"subtitles='{ass_path}'[vout]"
+    )
+    run([
+        "ffmpeg","-y",
+        "-loop","1","-i",str(image),
+        "-i",str(audio),
+        "-loop","1","-i",str(visual_layer),
+        "-filter_complex",vf,
+        "-map","[vout]",
+        "-map","1:a",
+        "-c:v","libx264",
+        "-preset","veryfast",
+        "-tune","stillimage",
+        "-pix_fmt","yuv420p",
+        "-c:a","aac",
+        "-b:a","192k",
+        "-shortest",
+        "-t",str(duration),
+        "-movflags","+faststart",
+        str(out)
+    ])
     if not out.exists() or out.stat().st_size==0: raise SystemExit(f"Scene {index} was not created correctly.")
     return out
 
