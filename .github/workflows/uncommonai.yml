@@ -40,8 +40,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
-        run: pip install feedparser
+      - name: Install research dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install feedparser
 
       - name: Run AI research
         env:
@@ -75,11 +77,12 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install production dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
-          pip install feedparser pillow edge-tts google-auth google-api-python-client
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          python -m pip install --upgrade pip
+          python -m pip install feedparser pillow edge-tts
 
       - name: Extract approved topic
         env:
@@ -98,10 +101,12 @@ jobs:
               topic = dispatch_topic
           else:
               body = os.environ["ISSUE_BODY"]
+
               patterns = [
                   r"##\s+Recommended topic\s*\n\s*\*\*(.+?)\*\*",
                   r"##\s+Recommended YouTube concept\s*\n\s*\*\*(.+?)\*\*",
               ]
+
               topic = None
 
               for pattern in patterns:
@@ -110,6 +115,7 @@ jobs:
                       body,
                       re.IGNORECASE | re.DOTALL
                   )
+
                   if match:
                       topic = re.sub(
                           r"\s+",
@@ -171,6 +177,7 @@ jobs:
       - name: Validate long-form MP4
         run: |
           test -s ./workspace/uncommonAI_video.mp4
+
           ffprobe -v error \
             -show_entries format=duration,size \
             -of default=noprint_wrappers=1 \
@@ -185,8 +192,9 @@ jobs:
           if-no-files-found: error
 
       # ============================================================
-      # YOUTUBE LONG-FORM UPLOAD DISABLED FOR V7 TEST
+      # YOUTUBE LONG-FORM UPLOAD DISABLED FOR REVIEW
       # ============================================================
+
       # - name: Upload long-form video to YouTube
       #   env:
       #     YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
@@ -204,8 +212,11 @@ jobs:
         run: |
           echo "===== SHORTS DIRECTORY ====="
           ls -lah ./workspace/shorts/ || true
+
           echo "===== ALL VIDEO FILES ====="
-          find ./workspace -type f \( -name "*.mp4" -o -name "*.mp3" -o -name "*.png" \) -print
+          find ./workspace -type f \
+            \( -name "*.mp4" -o -name "*.mp3" -o -name "*.png" \) \
+            -print
 
       - name: Validate Shorts
         run: |
@@ -215,14 +226,16 @@ jobs:
             ./workspace/shorts/short_03.mp4
           do
             test -s "$f"
+
             ffprobe -v error \
               -show_entries format=duration,size \
               -of default=noprint_wrappers=1 "$f"
           done
 
       # ============================================================
-      # YOUTUBE SHORTS UPLOAD DISABLED FOR V7 TEST
+      # YOUTUBE SHORTS UPLOAD DISABLED FOR REVIEW
       # ============================================================
+
       # - name: Upload 3 Shorts to YouTube
       #   env:
       #     YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
