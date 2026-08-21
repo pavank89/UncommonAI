@@ -13,6 +13,7 @@ WORK = ROOT / "workspace"
 VIDEO_DIR = WORK / "video"
 PACKAGE_FILE = WORK / "production_package.json"
 OUTPUT = WORK / "uncommonAI_video.mp4"
+VIDEO_DIR.mkdir(parents=True, exist_ok=True)
 
 VOICE = os.getenv("VIDEO_VOICE", "en-US-AriaNeural")
 W, H = 1920, 1080
