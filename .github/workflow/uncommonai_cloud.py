@@ -257,34 +257,51 @@ or lacks meaningful original explanation/commentary.
     return gate
 
 def produce():
-    if not APPROVED_TOPIC: raise SystemExit("APPROVED_TOPIC is missing.")
+    if not APPROVED_TOPIC:
+        raise SystemExit("APPROVED_TOPIC is missing.")
+
     package = build_package(APPROVED_TOPIC)
+
     gate = quality_gate(package)
-    if not gate.get("pass"): raise SystemExit("Quality gate failed.")
-    title = package.get("chosen_title", package.get("title_options", ["UncommonAI video"])[0])
-    body = f"""# uncommonAI — production ready
 
-<!-- uncommonai-production -->
+    if not gate.get("pass"):
+        print("QUALITY GATE RESULT:")
+        print(json.dumps(gate, indent=2))
+        raise SystemExit("Quality gate failed.")
 
-## {title}
+    title = package.get(
+        "chosen_title",
+        package.get("title_options", ["UncommonAI video"])[0]
+    )
 
-Quality gate: **PASS**
+    # Save the complete production package
+    (WORK / "production_package.json").write_text(
+        json.dumps(package, indent=2),
+        encoding="utf-8"
+    )
 
-Originality: {gate.get('originality')}
-Viewer value: {gate.get('viewer_value')}
-Evidence quality: {gate.get('evidence_quality')}
-Title quality: {gate.get('title_quality')}
-Hook quality: {gate.get('hook_quality')}
+    # Create a human-readable production brief
+    body = (
+        "# uncommonAI — production ready\n\n"
+        f"## Topic\n{APPROVED_TOPIC}\n\n"
+        f"## Title\n{title}\n\n"
+        "## Production package\n\n"
+        "The AI-generated production package has passed the "
+        "quality gate and is ready for review.\n\n"
+        "Review the accompanying production_package.json artifact "
+        "before publishing.\n\n"
+        "## Quality gate\n\n"
+        f"```json\n{json.dumps(gate, indent=2)}\n```\n"
+    )
 
-The generated package is available as a GitHub Actions artifact.
+    (WORK / "production.md").write_text(
+        body,
+        encoding="utf-8"
+    )
 
-Comment **PUBLISH** only after reviewing it.
-
-No YouTube upload occurs yet.
-"""
-    issue = create_issue(f"🎬 uncommonAI — final approval: {title}", body,
-                         ["uncommonai:ready-to-publish"])
-    print("Final approval issue:", issue["html_url"])
+    print("Production package created successfully.")
+    print(f"Title: {title}")
+    print(f"Topic: {APPROVED_TOPIC}")
 
 if __name__ == "__main__":
     if MODE == "research": research()
