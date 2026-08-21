@@ -299,6 +299,10 @@ def build_package(topic):
     prompt = f"""
 You are the lead producer for the faceless YouTube channel uncommonAI.
 
+GOAL:
+Create a high-retention, original, evidence-aware AI/technology video that
+feels like a human editorial product, not an automated news slideshow.
+
 Audience:
 Curious professionals, creators and tech enthusiasts who want to understand
 important AI developments without needing an engineering background.
@@ -309,29 +313,45 @@ APPROVED TOPIC:
 Create one ORIGINAL 7-10 minute YouTube package specifically about the
 approved topic.
 
-CRITICAL TOPIC RULES:
-- Stay faithful to the approved topic.
-- Do not reuse a previous video's topic, products, examples or framing unless
-  genuinely relevant.
-- Never substitute the topic with "5 AI tools" or another hard-coded concept.
-- If the topic is a list, use the appropriate items for THIS topic.
-- If the topic is about one subject, stay focused on that subject.
+EDITORIAL QUALITY:
+- Open with a concrete tension, surprising implication, or question in the
+  first 10-15 seconds.
+- Avoid "In today's video", "Let's dive in", and generic AI-news openings.
+- Build a clear narrative: hook -> context -> evidence -> what changed ->
+  implications -> limitations -> practical takeaway.
+- Prefer concrete examples and mechanisms over hype.
+- Clearly distinguish verified facts from interpretation.
+- Never invent statistics, quotes, benchmarks, product capabilities or demos.
+- Do not copy source headlines or another creator's framing.
+- Use original commentary throughout.
+- End with one memorable conclusion and a reason to watch the next video.
 
-CONTENT RULES:
-- Hook viewers in the first 15 seconds.
-- Explain why the topic matters.
-- Use simple language before technical detail.
-- Never invent statistics, quotes, benchmarks, demonstrations or capabilities.
-- Separate verified facts from interpretation.
-- Include source URLs in the sources array.
-- Avoid generic AI-news roundup structure.
-- Give the viewer a clear takeaway.
-- Create exactly 8 visual scenes.
-- Create exactly 3 Shorts derived from the same story, each with a different
-  hook, angle and takeaway.
-- Shorts should be suitable for vertical 9:16 video and approximately
-  30-55 seconds each.
-- Return valid JSON only.
+LONG-FORM VISUAL DESIGN:
+Create exactly 8 scenes. Each scene must have:
+- "narration": the spoken narration for that scene
+- "visual_prompt": a concise description of what an eventual visual should show
+- "key_phrase": 3-8 words that can be displayed prominently on screen
+- "visual_type": one of: "hook", "comparison", "process", "timeline",
+  "evidence", "warning", "takeaway"
+
+SHORTS:
+Create exactly 3 Shorts from different parts of the same story.
+Each Short must:
+- be 25-55 seconds;
+- have a different hook and angle;
+- deliver one self-contained insight;
+- avoid simply summarizing the long video;
+- have a title/hook that creates curiosity without clickbait;
+- end with a useful conclusion;
+- be suitable for vertical 9:16;
+- contain no unsupported claims.
+
+SOURCE QUALITY:
+- Include the original source URLs in "sources".
+- Use sources relevant to the approved topic.
+- Do not fabricate URLs.
+
+Return valid JSON only.
 
 Schema:
 {{
@@ -341,13 +361,18 @@ Schema:
   "thumbnail_prompt": "...",
   "script": "...",
   "scenes": [
-    {{"narration":"...", "visual_prompt":"..."}}
+    {{
+      "narration": "...",
+      "visual_prompt": "...",
+      "key_phrase": "...",
+      "visual_type": "hook"
+    }}
   ],
   "shorts": [
     {{
-      "title":"...",
-      "script":"...",
-      "visual_prompt":"..."
+      "title": "...",
+      "script": "...",
+      "visual_prompt": "..."
     }}
   ],
   "sources": ["https://..."]
@@ -366,6 +391,23 @@ Schema:
 
     if len(shorts) != 3:
         raise SystemExit(f"Expected 3 Shorts, found {len(shorts)}")
+
+    for i, scene in enumerate(scenes, 1):
+        if not safe_text(scene.get("narration")):
+            raise SystemExit(f"Scene {i} has no narration.")
+        if not safe_text(scene.get("key_phrase")):
+            raise SystemExit(f"Scene {i} has no key_phrase.")
+        if scene.get("visual_type") not in {
+            "hook", "comparison", "process", "timeline",
+            "evidence", "warning", "takeaway"
+        }:
+            raise SystemExit(f"Scene {i} has invalid visual_type.")
+
+    for i, short in enumerate(shorts, 1):
+        if not safe_text(short.get("title")):
+            raise SystemExit(f"Short {i} has no title.")
+        if not safe_text(short.get("script")):
+            raise SystemExit(f"Short {i} has no script.")
 
     (WORK / "production_package.json").write_text(
         json.dumps(package, indent=2), encoding="utf-8"
