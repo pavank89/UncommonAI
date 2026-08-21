@@ -281,6 +281,7 @@ Every scene MUST contain:
 - visual_prompt
 - key_phrase: 3-8 words
 - visual_type
+- visual_labels: exactly 3-4 concise labels that will appear inside the visualization
 
 Allowed visual_type values:
 - hook
@@ -373,7 +374,8 @@ Schema:
       "narration": "...",
       "visual_prompt": "...",
       "key_phrase": "...",
-      "visual_type": "hook"
+      "visual_type": "hook",
+      "visual_labels": ["...", "...", "..."]
     }}
   ],
   "shorts": [
@@ -452,6 +454,59 @@ Schema:
         if not safe_text(scene.get("visual_prompt")):
             raise SystemExit(f"Scene {i} has no visual_prompt.")
 
+        raw_labels = scene.get("visual_labels")
+        if not isinstance(raw_labels, list):
+            raw_labels = []
+
+        labels = []
+        for value in raw_labels:
+            value = safe_text(value)
+            if not value:
+                continue
+            if len(value.split()) > 5:
+                value = " ".join(value.split()[:5])
+            if len(value) > 38:
+                value = value[:38].rstrip()
+            if value.upper() in {
+                "CHECK", "RESULT", "SYSTEM", "OUTPUT", "INPUT",
+                "TRADE-OFF", "DECISION", "LOW", "HIGH", "RISK", "VALUE",
+            }:
+                continue
+            if value.lower() not in {x.lower() for x in labels}:
+                labels.append(value)
+
+        if len(labels) < 3:
+            # Robust fallback: derive compact labels from the scene's own
+            # visual prompt/key phrase rather than generic renderer filler.
+            source = safe_text(
+                scene.get("key_phrase")
+                or scene.get("visual_prompt")
+                or scene.get("narration")
+            )
+            words = [
+                w.strip(" ,.;:!?()[]{}\"'")
+                for w in source.split()
+            ]
+            for word in words:
+                if (
+                    len(word) >= 4
+                    and word.lower() not in {
+                        "show", "shows", "showing", "visual", "diagram",
+                        "timeline", "create", "illustrate", "illustrates",
+                        "scene", "with", "from", "into", "that", "this",
+                    }
+                ):
+                    if word.lower() not in {x.lower() for x in labels}:
+                        labels.append(word)
+                if len(labels) >= 3:
+                    break
+
+        if len(labels) < 3:
+            raise SystemExit(
+                f"Scene {i} does not have enough meaningful visual_labels."
+            )
+
+        scene["visual_labels"] = labels[:4]
         scene["visual_type"] = visual_type
 
     visual_types = [scene["visual_type"] for scene in scenes]
