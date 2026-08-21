@@ -124,144 +124,229 @@ def center_text(draw, text, box, font, fill):
 
 
 
-def visual_keywords(scene):
-    """Return short, source-derived labels for visuals; never invent numeric facts."""
-    text = safe_text(
-        scene.get("visual_text")
-        or scene.get("key_phrase")
-        or scene.get("heading")
-        or scene.get("title")
-        or scene.get("narration")
-    )
-    parts = re.split(r"(?<=[.!?])\s+", text)
-    labels = []
-    for part in parts:
-        part = safe_text(part)
-        if 2 <= len(part.split()) <= 7:
-            labels.append(part[:42])
-    return labels[:4] or ["INPUT", "PROCESS", "CHECK", "RESULT"]
+def visual_keywords(scene, limit=4):
+    """Extract concise labels from supplied scene data; never invent facts."""
+    candidates = []
+    for key in ("visual_labels", "key_points", "entities", "visual_text", "key_phrase", "heading", "title"):
+        value = scene.get(key)
+        if isinstance(value, list):
+            candidates.extend(value)
+        elif value:
+            candidates.append(value)
 
-def visual_kind(value, index):
-    vt = safe_text(value).lower()
-    if any(k in vt for k in ("warning", "risk", "failure", "bug", "problem")): return "risk"
-    if any(k in vt for k in ("compare", "versus", "split", "before", "after", "vs")): return "compare"
-    if any(k in vt for k in ("metric", "data", "chart", "growth", "trend")): return "metrics"
-    if any(k in vt for k in ("timeline", "sequence", "steps")): return "timeline"
-    if any(k in vt for k in ("quote", "fact", "claim")): return "quote"
-    if any(k in vt for k in ("matrix", "grid")): return "matrix"
-    kinds = ["flow", "compare", "risk", "metrics", "timeline", "matrix", "quote", "architecture", "steps", "flow"]
-    return kinds[(index - 1) % len(kinds)]
+    if not candidates:
+        candidates = re.split(r"(?<=[.!?])\s+", safe_text(scene.get("narration")))
+
+    labels = []
+    for item in candidates:
+        item = safe_text(item)
+        item = re.sub(r"^(fact|point|step|result|example)\s*[:\-]\s*", "", item, flags=re.I)
+        if not item or item.upper() in {x.upper() for x in labels}:
+            continue
+        if len(item.split()) > 8:
+            item = " ".join(item.split()[:8])
+        if 1 <= len(item.split()) <= 8:
+            labels.append(item[:46])
+        if len(labels) >= limit:
+            break
+
+    return labels or ["INPUT", "SYSTEM", "CHECK", "RESULT"]
+
+
+def visual_kind(scene, index, previous=None):
+    """Choose a visual treatment from scene meaning, while preventing adjacent repeats."""
+    explicit = safe_text(scene.get("visual_type") or scene.get("visual") or scene.get("diagram")).lower()
+    aliases = {
+        "comparison": "compare", "process": "flow", "workflow": "flow",
+        "system": "architecture", "stack": "architecture", "steps": "steps",
+        "data": "metrics", "chart": "metrics", "trend": "metrics",
+        "warning": "risk", "failure": "risk", "fact": "evidence",
+        "claim": "evidence", "quote": "quote", "timeline": "timeline",
+        "journey": "journey", "decision": "decision", "matrix": "matrix",
+    }
+    for key, value in aliases.items():
+        if key in explicit:
+            return value
+
+    text = safe_text(scene.get("title")) + " " + safe_text(scene.get("heading")) + " " + safe_text(scene.get("narration"))
+    text = text.lower()
+    candidates = []
+    if any(k in text for k in ("before", "after", "versus", " vs ", "compare", "compared")):
+        candidates.append("compare")
+    if any(k in text for k in ("risk", "failure", "broke", "broken", "danger", "problem", "missed")):
+        candidates.append("risk")
+    if any(k in text for k in ("step", "workflow", "process", "pipeline", "first", "then", "finally")):
+        candidates.append("flow")
+    if any(k in text for k in ("architecture", "system", "stack", "component", "layer")):
+        candidates.append("architecture")
+    if any(k in text for k in ("metric", "data", "percentage", "%", "rate", "latency", "score", "growth")):
+        candidates.append("metrics")
+    if any(k in text for k in ("timeline", "over time", "evolution", "history")):
+        candidates.append("timeline")
+    if any(k in text for k in ("evidence", "fact", "source", "study", "research")):
+        candidates.append("evidence")
+    if any(k in text for k in ("decision", "choose", "tradeoff", "should")):
+        candidates.append("decision")
+
+    rotation = ["flow", "compare", "architecture", "risk", "journey", "evidence", "metrics", "decision", "steps", "timeline", "quote", "matrix"]
+    for kind in candidates + rotation:
+        if kind != previous:
+            return kind
+    return rotation[index % len(rotation)]
+
+
+def draw_header(draw, text, area, p, font):
+    x, y, w, h = area
+    draw.text((x, y), safe_text(text).upper()[:44], font=font, fill=p["accent"])
 
 
 def draw_visual(draw, kind, area, p, scene=None):
     from PIL import ImageFont
     x, y, w, h = area
-    label = ImageFont.truetype(BOLD, 26)
-    big = ImageFont.truetype(BOLD, 46)
-    small = ImageFont.truetype(FONT, 22)
+    scene = scene or {}
+    labels = visual_keywords(scene, 4)
+    title_font = ImageFont.truetype(BOLD, 28)
+    label_font = ImageFont.truetype(BOLD, 24)
+    body_font = ImageFont.truetype(FONT, 21)
+    big_font = ImageFont.truetype(BOLD, 58)
 
+    # Use the scene's own words rather than generic filler whenever possible.
     if kind == "flow":
-        labels = ["INPUT", "AI", "CHECK", "RESULT"]
-        gap = 20
-        bw = (w - gap*3) / 4
-        by = y + h*0.30
-        for i, text in enumerate(labels):
-            bx = x + i*(bw+gap)
-            rect(draw, (bx, by, bx+bw, by+190), p["panel"], p["accent"], 3)
-            center_text(draw, text, (bx, by+35, bx+bw, by+110), label, p["text"])
-            center_text(draw, "✓" if i == 3 else str(i+1), (bx, by+105, bx+bw, by+175), big, p["accent2"])
+        steps = (labels + ["CHECK", "RESULT"])[:4]
+        bw = (w - 75) / 4
+        by = y + 125
+        for i, text in enumerate(steps):
+            bx = x + i * (bw + 25)
+            rect(draw, (bx, by, bx + bw, by + 220), p["panel"], p["accent"], 3, 24)
+            center_text(draw, f"{i+1:02d}", (bx, by+18, bx+bw, by+70), label_font, p["accent"])
+            center_text(draw, text.upper()[:25], (bx+18, by+75, bx+bw-18, by+180), label_font, p["text"])
             if i < 3:
-                draw.line((bx+bw+4, by+95, bx+bw+gap-8, by+95), fill=p["muted"], width=4)
+                draw.line((bx+bw+5, by+110, bx+bw+18, by+110), fill=p["accent2"], width=5)
+                draw.polygon([(bx+bw+18,by+110),(bx+bw+4,by+100),(bx+bw+4,by+120)], fill=p["accent2"])
 
     elif kind == "compare":
-        cards = [("BEFORE", "Manual"), ("AI", "Fast"), ("AFTER", "Verified")]
-        bw, gap = 400, 45
-        start = x + (w - (3*bw+2*gap))/2
-        by = y + 125
-        for i, (a, b) in enumerate(cards):
-            bx = start+i*(bw+gap)
-            rect(draw, (bx, by, bx+bw, by+250), p["panel"], p["accent"], 3)
-            center_text(draw, a, (bx, by+30, bx+bw, by+100), label, p["accent"])
-            center_text(draw, b, (bx, by+105, bx+bw, by+205), big, p["text"])
+        pairs = labels[:3] if len(labels) >= 3 else ["BEFORE", "AI", "AFTER"]
+        bw, gap = 420, 35
+        total = 3*bw + 2*gap
+        start = x + (w-total)/2
+        by = y + 105
+        for i, text in enumerate(pairs):
+            bx = start + i*(bw+gap)
+            rect(draw, (bx, by, bx+bw, by+300), p["panel"], p["accent"], 3, 26)
+            center_text(draw, ["A", "B", "C"][i], (bx, by+22, bx+bw, by+78), big_font, p["accent"])
+            center_text(draw, text.upper()[:24], (bx+25, by+105, bx+bw-25, by+215), label_font, p["text"])
+            if i < 2:
+                draw.line((bx+bw+4, by+150, bx+bw+gap-8, by+150), fill=p["muted"], width=4)
+
+    elif kind == "architecture":
+        nodes = (labels + ["SYSTEM", "OUTPUT"])[:4]
+        bw = 330
+        gap = 55
+        total = 4*bw + 3*gap
+        start = x + (w-total)/2
+        cy = y + 235
+        for i, text in enumerate(nodes):
+            bx = start + i*(bw+gap)
+            rect(draw, (bx, cy-100, bx+bw, cy+100), p["panel"], p["accent"], 3, 25)
+            center_text(draw, f"{i+1}", (bx, cy-80, bx+bw, cy-25), label_font, p["accent"])
+            center_text(draw, text.upper()[:22], (bx+15, cy-5, bx+bw-15, cy+70), label_font, p["text"])
+            if i < 3:
+                draw.line((bx+bw+6, cy, bx+bw+gap-10, cy), fill=p["accent2"], width=5)
+                draw.polygon([(bx+bw+gap-10,cy),(bx+bw+gap-28,cy-11),(bx+bw+gap-28,cy+11)], fill=p["accent2"])
 
     elif kind == "risk":
         cx, cy = x+w/2, y+h/2
-        draw.polygon([(cx,cy-150),(cx-145,cy+110),(cx+145,cy+110)], fill=p["panel"], outline=p["accent"])
-        center_text(draw, "!", (cx-70,cy-85,cx+70,cy+55), ImageFont.truetype(BOLD,110), p["accent"])
-        center_text(draw, "HUMAN CHECK", (x+180,y+h-110,x+w-180,y+h-55), label, p["text"])
+        draw.polygon([(cx,cy-175),(cx-170,cy+125),(cx+170,cy+125)], fill=p["panel"], outline=p["accent"])
+        center_text(draw, "!", (cx-80,cy-115,cx+80,cy+50), ImageFont.truetype(BOLD,125), p["accent"])
+        risk_label = labels[0] if labels else "RISK"
+        center_text(draw, risk_label.upper()[:25], (x+150,cy+40,x+w-150,cy+105), label_font, p["text"])
+        center_text(draw, "HUMAN REVIEW", (x+180,y+h-75,x+w-180,y+h-20), body_font, p["accent2"])
 
     elif kind == "metrics":
-        base = y+h-120
-        left = x+220
-        draw.line((left, base, x+w-150, base), fill=p["muted"], width=3)
-        pts = [(left,base-40),(left+150,base-90),(left+300,base-170),(left+470,base-260),(left+650,base-330)]
-        draw.line(pts, fill=p["accent"], width=8)
-        for px, py in pts:
-            draw.ellipse((px-10,py-10,px+10,py+10), fill=p["accent2"])
-        center_text(draw, "SIGNAL → CHANGE → RESULT", (x+200,y+45,x+w-200,y+110), label, p["text"])
+        # Qualitative visualization only unless actual numeric data is supplied.
+        bars = labels[:3] if len(labels) >= 3 else ["SIGNAL", "CHANGE", "RESULT"]
+        bx, by, bw = x+170, y+110, w-340
+        for i, text in enumerate(bars):
+            yy = by + i*105
+            draw.text((bx, yy), text.upper()[:28], font=label_font, fill=p["text"])
+            for dot in range(5):
+                px = bx + bw - 180 + dot*36
+                fill = p["accent"] if dot <= i else p["bg"]
+                draw.ellipse((px-9, yy+46, px+9, yy+64), fill=fill, outline=p["muted"])
+        draw.text((bx, by+345), "QUALITATIVE SIGNAL — NO INVENTED NUMBERS", font=body_font, fill=p["muted"])
 
     elif kind == "timeline":
-        yy = y+h/2
-        x1, x2 = x+170, x+w-170
+        events = (labels + ["NEXT"])[:4]
+        yy = y + 230
+        x1, x2 = x+130, x+w-130
         draw.line((x1,yy,x2,yy), fill=p["muted"], width=5)
-        labels = ["START","TEST","BREAK","LEARN"]
-        for i, t in enumerate(labels):
-            px = x1 + i*(x2-x1)/3
-            draw.ellipse((px-22,yy-22,px+22,yy+22), fill=p["accent"])
-            center_text(draw, t, (px-85,yy+42,px+85,yy+85), small, p["text"])
+        for i, text in enumerate(events):
+            px = x1 + i*(x2-x1)/max(1,len(events)-1)
+            draw.ellipse((px-25,yy-25,px+25,yy+25), fill=p["accent"])
+            center_text(draw, f"{i+1}", (px-25,yy-25,px+25,yy+25), label_font, p["bg"])
+            center_text(draw, text.upper()[:22], (px-115,yy+55,px+115,yy+110), body_font, p["text"])
 
-    elif kind == "matrix":
-        gx, gy = x+260, y+45
-        size = 155
-        for r in range(2):
-            for c in range(2):
-                bx, by = gx+c*(size+30), gy+r*(size+30)
-                rect(draw,(bx,by,bx+size,by+size),p["panel"],p["accent"],3)
-        center_text(draw,"LOW",(gx,gy,gx+size,gy+size),small,p["muted"])
-        center_text(draw,"HIGH",(gx+size+30,gy,gx+2*size+30,gy+size),label,p["text"])
-        center_text(draw,"RISK",(gx,gy+size+30,gx+size,gy+2*size+30),label,p["text"])
-        center_text(draw,"VALUE",(gx+size+30,gy+size+30,gx+2*size+30,gy+2*size+30),label,p["accent2"])
+    elif kind == "journey":
+        events = (labels + ["OUTCOME"])[:4]
+        for i, text in enumerate(events):
+            bx = x + 90 + i*((w-180)/4)
+            cy = y + 225 + (25 if i % 2 else -25)
+            draw.ellipse((bx-52,cy-52,bx+52,cy+52), fill=p["panel"], outline=p["accent"], width=4)
+            center_text(draw, str(i+1), (bx-40,cy-40,bx+40,cy+40), big_font, p["accent"])
+            center_text(draw, text.upper()[:18], (bx-100,cy+70,bx+100,cy+120), body_font, p["text"])
+            if i < len(events)-1:
+                nx = x + 90 + (i+1)*((w-180)/4)
+                draw.line((bx+58,cy,nx-58,cy), fill=p["muted"], width=4)
 
-    elif kind == "architecture":
-        labels = visual_keywords(scene or {})
-        if len(labels) < 3:
-            labels = ["INPUT", "SYSTEM", "OUTPUT"]
-        labels = labels[:3]
-        bw = min(430, (w - 100) / 3)
-        gap = 50
-        start = x + (w - (3*bw + 2*gap))/2
-        by = y + 120
-        for i, text in enumerate(labels):
-            bx = start + i*(bw+gap)
-            rect(draw, (bx, by, bx+bw, by+230), p["panel"], p["accent"], 3, 24)
-            center_text(draw, f"{i+1:02d}", (bx+20,by+18,bx+95,by+85), small, p["accent"])
-            f = ImageFont.truetype(BOLD, 31)
-            center_text(draw, text.upper(), (bx+25,by+85,bx+bw-25,by+185), f, p["text"])
-            if i < 2:
-                draw.line((bx+bw+8, by+115, bx+bw+gap-8, by+115), fill=p["accent2"], width=5)
-                draw.polygon([(bx+bw+gap-8,by+115),(bx+bw+gap-28,by+103),(bx+bw+gap-28,by+127)], fill=p["accent2"])
+    elif kind == "evidence":
+        claim = safe_text(scene.get("key_claim") or scene.get("claim") or (labels[0] if labels else "KEY FINDING"))
+        source = safe_text(scene.get("source") or scene.get("citation") or "SOURCE / EVIDENCE")
+        rect(draw,(x+100,y+75,x+w-100,y+h-65),p["panel"],p["accent"],3,30)
+        draw.text((x+150,y+120),"EVIDENCE",font=title_font,fill=p["accent"])
+        lines = wrap(draw, claim, label_font, w-350, 3)
+        yy=y+190
+        for line in lines:
+            center_text(draw,line,(x+150,yy,x+w-150,yy+55),label_font,p["text"]); yy+=65
+        draw.line((x+150,y+h-175,x+w-150,y+h-175),fill=p["muted"],width=2)
+        center_text(draw,source[:60],(x+150,y+h-150,x+w-150,y+h-95),body_font,p["muted"])
+
+    elif kind == "decision":
+        options = (labels + ["TRADE-OFF", "DECISION"])[:3]
+        for i,text in enumerate(options):
+            bx=x+120+i*430; by=y+135
+            rect(draw,(bx,by,bx+350,by+210),p["panel"],p["accent"] if i==2 else p["muted"],3,26)
+            center_text(draw,str(i+1),(bx,by+20,bx+350,by+80),big_font,p["accent"] if i==2 else p["muted"])
+            center_text(draw,text.upper()[:20],(bx+20,by+95,bx+330,by+165),label_font,p["text"])
+            if i<2:
+                draw.line((bx+355,by+105,bx+420,by+105),fill=p["muted"],width=4)
+        center_text(draw,"CHOOSE BASED ON CONTEXT",(x+200,y+h-75,x+w-200,y+h-25),body_font,p["accent2"])
 
     elif kind == "steps":
-        labels = visual_keywords(scene or {})
-        labels = (labels + ["CHECK", "RESULT"])[:4]
-        bw = (w - 60) / 2
-        gapx, gapy = 60, 45
-        by = y + 35
-        for i, text in enumerate(labels):
-            row, col = divmod(i, 2)
-            bx = x + col*(bw+gapx)
-            by_i = by + row*(155+gapy)
-            rect(draw, (bx,by_i,bx+bw,by_i+155), p["panel"], p["accent"], 3, 24)
-            center_text(draw, f"{i+1}", (bx+18,by_i+18,bx+80,by_i+75), small, p["accent"])
-            f = ImageFont.truetype(BOLD, 28)
-            center_text(draw, text.upper(), (bx+70,by_i+35,bx+bw-20,by_i+120), f, p["text"])
+        steps = (labels + ["CHECK", "RESULT"])[:4]
+        bw=(w-60)/2; gapx,gapy=60,45; by=y+35
+        for i,text in enumerate(steps):
+            row,col=divmod(i,2); bx=x+col*(bw+gapx); yy=by+row*(155+gapy)
+            rect(draw,(bx,yy,bx+bw,yy+155),p["panel"],p["accent"],3,24)
+            center_text(draw,f"{i+1}",(bx+18,yy+18,bx+80,yy+75),label_font,p["accent"])
+            center_text(draw,text.upper()[:25],(bx+70,yy+35,bx+bw-20,yy+120),label_font,p["text"])
 
-    else:  # quote
-        rect(draw,(x+190,y+85,x+w-190,y+h-85),p["panel"],p["accent"],3,32)
-        center_text(draw,'“', (x+240,y+100,x+330,y+210), ImageFont.truetype(BOLD,100), p["accent"])
-        center_text(draw,"FACT / CLAIM", (x+330,y+150,x+w-260,y+260), label, p["text"])
-        center_text(draw,"VERIFY BEFORE TRUST", (x+250,y+h-210,x+w-250,y+h-130), small, p["muted"])
+    elif kind == "quote":
+        quote = safe_text(scene.get("quote") or scene.get("key_claim") or (labels[0] if labels else "KEY IDEA"))
+        rect(draw,(x+150,y+70,x+w-150,y+h-70),p["panel"],p["accent"],3,30)
+        center_text(draw,'“',(x+210,y+85,x+330,y+220),ImageFont.truetype(BOLD,105),p["accent"])
+        lines=wrap(draw,quote,label_font,w-420,4); yy=y+220
+        for line in lines:
+            center_text(draw,line,(x+220,yy,x+w-220,yy+52),label_font,p["text"]); yy+=60
+        center_text(draw,"ORIGINAL COMMENTARY",(x+250,y+h-145,x+w-250,y+h-90),body_font,p["muted"])
 
+    else:  # matrix
+        size=165; gap=30; gx=x+w/2-size-gap/2; gy=y+95
+        labels2=(labels+["LOW","HIGH","RISK","VALUE"])[:4]
+        for r in range(2):
+            for c in range(2):
+                bx=gx+c*(size+gap); by=gy+r*(size+gap)
+                rect(draw,(bx,by,bx+size,by+size),p["panel"],p["accent"],3)
+                center_text(draw,labels2[r*2+c].upper()[:14],(bx+10,by+35,bx+size-10,by+125),label_font,p["text"])
 
 def make_card(scene, index, title, p, path):
     from PIL import Image, ImageDraw, ImageFont
@@ -286,7 +371,7 @@ def make_card(scene, index, title, p, path):
 
     # Large visual zone; no text is allowed in subtitle zone below 900.
     rect(draw,(90,340,W-90,870),p["panel"],p["accent"],2,30)
-    kind=visual_kind(scene.get("visual_type") or scene.get("visual") or scene.get("diagram"),index)
+    kind=scene.get("_renderer_visual_kind") or visual_kind(scene,index)
     draw_visual(draw,kind,(145,385,W-290,450),p,scene)
 
     # Tiny branded footer only above the subtitle-safe zone.
@@ -329,8 +414,13 @@ def main():
         if item.is_file(): item.unlink()
     palettes=PALETTE.copy(); random.SystemRandom().shuffle(palettes)
     segments=[]
+    previous_kind = None
     for i,scene in enumerate(scenes,1):
-        segments.append(render_scene(i,scene,package.get("chosen_title") or package.get("title") or "uncommonAI",palettes[i-1] if i-1<len(palettes) else palettes[(i-1)%len(palettes)]))
+        chosen_kind = visual_kind(scene, i, previous_kind)
+        scene = dict(scene)
+        scene["_renderer_visual_kind"] = chosen_kind
+        previous_kind = chosen_kind
+        segments.append(render_scene(i,scene,package.get("chosen_title") or package.get("title") or "uncommonAI",palettes[(i-1)%len(palettes)]))
     concat=VIDEO_DIR/"segments.txt"
     concat.write_text("\n".join(f"file '{p.resolve()}'" for p in segments)+"\n",encoding="utf-8")
     run(["ffmpeg","-y","-f","concat","-safe","0","-i",str(concat),"-c","copy","-movflags","+faststart",str(OUTPUT)])
