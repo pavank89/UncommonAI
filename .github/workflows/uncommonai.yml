@@ -49,12 +49,24 @@ jobs:
           UNCOMMONAI_MODE: research
         run: python .github/workflow/uncommonai_cloud.py
 
+      - name: Debug research workspace
+        run: |
+          echo "Current directory:"
+          pwd
+          echo ""
+          echo "Workspace:"
+          ls -la ./workspace/ || true
+          echo ""
+          echo "Files:"
+          find ./workspace -maxdepth 3 -type f -print 2>/dev/null || true
+
       - name: Save research
         uses: actions/upload-artifact@v4
         with:
           name: uncommonai-research
-          path: workspace/
+          path: ./workspace/
           retention-days: 7
+          if-no-files-found: error
 
   produce_from_approval:
     if: |
@@ -138,12 +150,49 @@ jobs:
           export APPROVED_TOPIC="$(cat /tmp/topic.txt)"
           python .github/workflow/uncommonai_cloud.py
 
+      - name: Debug production workspace
+        run: |
+          echo "========================================"
+          echo "CURRENT DIRECTORY"
+          echo "========================================"
+          pwd
+
+          echo ""
+          echo "========================================"
+          echo "ROOT DIRECTORY"
+          echo "========================================"
+          ls -la
+
+          echo ""
+          echo "========================================"
+          echo "WORKSPACE DIRECTORY"
+          echo "========================================"
+          ls -la ./workspace/ || true
+
+          echo ""
+          echo "========================================"
+          echo "WORKSPACE FILES"
+          echo "========================================"
+          find ./workspace -maxdepth 3 -type f -print 2>/dev/null || true
+
+          echo ""
+          echo "========================================"
+          echo "ALL GENERATED FILES"
+          echo "========================================"
+          find . -maxdepth 5 -type f \
+            \( -name "package.json" \
+            -o -name "production_package.json" \
+            -o -name "production.md" \
+            -o -name "quality_gate.json" \) \
+            -print 2>/dev/null || true
+
       - name: Save production package
         uses: actions/upload-artifact@v4
         with:
           name: uncommonai-production
-          path: workspace/
+          path: ./workspace/
           retention-days: 7
+          if-no-files-found: error
 
       - name: Request final approval
         if: github.event_name == 'issue_comment'
