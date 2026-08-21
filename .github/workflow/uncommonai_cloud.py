@@ -155,7 +155,8 @@ def gemini_generate(prompt):
             }
         ],
         "generationConfig": {
-            "temperature": 0.7
+            "temperature": 0.2,
+            "responseMimeType": "application/json"
         }
     }
 
@@ -183,8 +184,34 @@ def gemini_generate(prompt):
         raise SystemExit(f"Could not parse Gemini response: {e}")
 
 def parse_json(text):
-    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.I)
-    return json.loads(text)
+    text = text.strip()
+
+    # Remove Markdown code fences
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I)
+    text = re.sub(r"\s*```$", "", text)
+
+    # Normal JSON
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Extract the first complete JSON object
+    start = text.find("{")
+    if start == -1:
+        print("GEMINI RESPONSE:")
+        print(text[:8000])
+        raise SystemExit("Gemini did not return a JSON object.")
+
+    try:
+        decoder = json.JSONDecoder()
+        result, _ = decoder.raw_decode(text[start:])
+        return result
+    except json.JSONDecodeError as e:
+        print("INVALID GEMINI JSON:")
+        print(text[:8000])
+        print("JSON ERROR:", e)
+        raise SystemExit("Could not parse Gemini JSON response.")
 
 def build_package(topic):
     prompt = f"""
