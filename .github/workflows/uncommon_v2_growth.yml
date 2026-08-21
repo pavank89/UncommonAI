@@ -1,300 +1,34 @@
-name: uncommonAI Autopilot V5 (Growth Test)
+name: uncommonAI Growth Test (Parallel V2)
 
 on:
-  schedule:
-    - cron: "0 4 * * 1"
-
   workflow_dispatch:
     inputs:
-      mode:
-        description: "Choose what to run"
+      topic:
+        description: 'Topic for growth test pipeline'
         required: true
-        default: "research"
-        type: choice
-        options:
-          - research
-          - produce
-      approved_topic:
-        description: "Topic for produce mode"
-        required: false
+        default: 'Model Context Protocol security blind spots in testing'
         type: string
 
-  issue_comment:
-    types: [created]
-
-permissions:
-  contents: read
-  issues: write
-
 jobs:
-  research:
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'research')
+  run-growth-test:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          python-version: "3.12"
+          python-version: '3.10'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install feedparser
+          pip install feedparser
 
-      - name: Run AI research
+      - name: Run Parallel Growth Pipeline
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          UNCOMMONAI_MODE: research
-        run: |
-          python .github/workflow/uncommonai_cloud_v2.py
-
-      - name: Save research
-        uses: actions/upload-artifact@v4
-        with:
-          name: uncommonai-research
-          path: ./workspace/
-          retention-days: 7
-          if-no-files-found: error
-
-  produce_from_approval:
-    if: |
-      (github.event_name == 'workflow_dispatch' && inputs.mode == 'produce') ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request == null &&
-       contains(github.event.comment.body, 'APPROVE') &&
-       contains(github.event.issue.body, '<!-- uncommonai-topic-approval -->'))
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install production dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg
-          python -m pip install --upgrade pip
-          python -m pip install feedparser pillow edge-tts
-
-      - name: Extract approved topic
-        env:
-          ISSUE_BODY: ${{ github.event.issue.body }}
-          DISPATCH_TOPIC: ${{ inputs.approved_topic }}
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          python - <<'PY'
-          import os
-          import re
-
-          event_name = os.environ["EVENT_NAME"]
-          dispatch_topic = os.environ.get("DISPATCH_TOPIC", "").strip()
-
-          if event_name == "workflow_dispatch":
-              topic = dispatch_topic
-          else:
-              body = os.environ["ISSUE_BODY"]
-
-              patterns = [
-                  r"##\s+Recommended topic\s*\n\s*\*\*(.+?)\*\*",
-                  r"##\s+Recommended YouTube concept\s*\n\s*\*\*(.+?)\*\*",
-              ]
-
-              topic = None
-
-              for pattern in patterns:
-                  match = re.search(
-                      pattern,
-                      body,
-                      re.IGNORECASE | re.DOTALL
-                  )
-
-                  if match:
-                      topic = re.sub(
-                          r"\s+",
-                          " ",
-                          match.group(1)
-                      ).strip()
-                      break
-
-          if not topic:
-              raise SystemExit(
-                  "No approved topic supplied. For manual produce testing, "
-                  "enter a topic in approved_topic."
-              )
-
-          print(f"Approved topic: {topic}")
-
-          with open("/tmp/topic.txt", "w", encoding="utf-8") as f:
-              f.write(topic)
-          PY
-
-      - name: Generate production package
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UNCOMMONAI_MODE: 'produce'
+          APPROVED_TOPIC: ${{ github.event.inputs.topic }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: gemini-3.5-flash-lite
-          UNCOMMONAI_MODE: produce
-        run: |
-          export APPROVED_TOPIC="$(cat /tmp/topic.txt)"
-          python .github/workflow/uncommonai_cloud.py
-
-      # ============================================================
-      # UNCOMMONAI CONTENT INTELLIGENCE / MONETIZATION SAFETY
-      # ============================================================
-
-      - name: Score content intelligence
-        run: |
-          python .github/workflow/content_intelligence.py \
-            --package ./workspace/production_package.json \
-            --output ./workspace/content_intelligence.json
-
-      - name: Monetization safety gate
-        run: |
-          python .github/workflow/monetization_gate.py \
-            --package ./workspace/production_package.json \
-            --intelligence ./workspace/content_intelligence.json
-
-      - name: Debug production workspace
-        run: |
-          pwd
-          echo "===== WORKSPACE ====="
-          ls -la ./workspace/
-          echo "===== ALL FILES ====="
-          find ./workspace -maxdepth 3 -type f -print
-
-      - name: Save production package
-        uses: actions/upload-artifact@v4
-        with:
-          name: uncommonai-production
-          path: ./workspace/
-          retention-days: 7
-          if-no-files-found: error
-
-      - name: Verify video dependencies
-        run: |
-          ffmpeg -version | head -n 1
-          ffprobe -version | head -n 1
-          edge-tts --version
-
-      - name: Render long-form MP4
-        env:
-          VIDEO_VOICE: en-US-AriaNeural
-        run: |
-          python .github/workflow/video_renderer.py
-
-      - name: Validate long-form MP4
-        run: |
-          test -s ./workspace/uncommonAI_video.mp4
-
-          ffprobe -v error \
-            -show_entries format=duration,size \
-            -of default=noprint_wrappers=1 \
-            ./workspace/uncommonAI_video.mp4
-
-      - name: Save long-form MP4
-        uses: actions/upload-artifact@v4
-        with:
-          name: uncommonai-video
-          path: ./workspace/uncommonAI_video.mp4
-          retention-days: 7
-          if-no-files-found: error
-
-      # ============================================================
-      # YOUTUBE LONG-FORM UPLOAD DISABLED FOR REVIEW
-      # ============================================================
-
-      # - name: Upload long-form video to YouTube
-      #   env:
-      #     YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
-      #   run: |
-      #     python .github/workflow/youtube_uploader.py
-
-      - name: Render 3 Shorts
-        env:
-          VIDEO_VOICE: en-US-AriaNeural
-        run: |
-          python .github/workflow/short_renderer.py
-
-      - name: Debug Shorts output
-        if: always()
-        run: |
-          echo "===== SHORTS DIRECTORY ====="
-          ls -lah ./workspace/shorts/ || true
-
-          echo "===== ALL VIDEO FILES ====="
-          find ./workspace -type f \
-            \( -name "*.mp4" -o -name "*.mp3" -o -name "*.png" \) \
-            -print
-
-      - name: Validate Shorts
-        run: |
-          for f in \
-            ./workspace/shorts/short_01.mp4 \
-            ./workspace/shorts/short_02.mp4 \
-            ./workspace/shorts/short_03.mp4
-          do
-            test -s "$f"
-
-            ffprobe -v error \
-              -show_entries format=duration,size \
-              -of default=noprint_wrappers=1 "$f"
-          done
-
-      # ============================================================
-      # YOUTUBE SHORTS UPLOAD DISABLED FOR REVIEW
-      # ============================================================
-
-      # - name: Upload 3 Shorts to YouTube
-      #   env:
-      #     YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
-      #   run: |
-      #     python .github/workflow/youtube_shorts_uploader.py
-
-      - name: Save long-form production files
-        uses: actions/upload-artifact@v4
-        with:
-          name: uncommonai-video-production
-          path: ./workspace/video/
-          retention-days: 7
-          if-no-files-found: error
-
-      - name: Save Shorts production files
-        uses: actions/upload-artifact@v4
-        with:
-          name: uncommonai-shorts-production
-          path: ./workspace/shorts/
-          retention-days: 7
-          if-no-files-found: error
-
-      - name: Request final approval
-        if: github.event_name == 'issue_comment'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh issue comment ${{ github.event.issue.number }} \
-            --body "✅ V7 production package, long-form MP4, and 3 Shorts generated and validated. YouTube uploads are disabled for this review run."
-
-  final_approval:
-    if: |
-      github.event_name == 'issue_comment' &&
-      github.event.issue.pull_request == null &&
-      contains(github.event.comment.body, 'PUBLISH') &&
-      contains(github.event.issue.body, '<!-- uncommonai-topic-approval -->')
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Confirm final approval
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh issue comment ${{ github.event.issue.number }} \
-            --body "PUBLISH approval was received. YouTube uploads are currently disabled in this review workflow."
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python uncommonai_cloud_v2.py
