@@ -257,46 +257,21 @@ Do not replace it with a different topic, trend, list, or angle.
 
 EDITORIAL DIRECTION FOR THIS TOPIC:
 
-If the approved topic is:
-"5 AI Tools Actually Changing Productivity in 2026"
+Build the entire video around the APPROVED TOPIC above.
 
-frame the video more accurately as:
-"5 Tools Actually Changing Productivity in 2026"
-
-Do NOT describe all five products as "AI tools" if some are primarily
-developer, research, visual communication, or workflow automation products.
-It is acceptable for a productivity tool to use AI without being primarily
-an AI product.
-
-For this topic, use exactly these five products:
-1. Claude Code
-2. Perplexity Pro
-3. Cursor
-4. Napkin AI
-5. Make.com
+CRITICAL:
+- Do not substitute the approved topic with another topic.
+- Do not reuse a previous video's products, examples, title, structure, or angle
+  unless they are genuinely relevant to the approved topic.
+- If the approved topic is a list, identify the appropriate items yourself from
+  current authoritative research rather than using a hard-coded list.
+- If the topic concerns one product, company, technology, event, or concept,
+  stay focused on that subject.
+- If the topic is ambiguous, choose the most useful interpretation while
+  remaining faithful to the wording of APPROVED TOPIC.
+- Generate original analysis specific to this topic.
 
 FACTUAL SAFETY — IMPORTANT:
-
-CURSOR:
-Do NOT claim that Cursor uses a "local vector database" unless a specific
-authoritative source directly supports that implementation detail.
-
-Prefer:
-"Cursor indexes and understands your codebase so its AI features can work
-across related files."
-
-PERPLEXITY:
-Do NOT claim that Perplexity "aggregates multiple model architectures" or
-"enforces citation-backed synthesis."
-
-Prefer:
-"Perplexity combines web search with AI-generated answers and citations,
-making it useful when users need to trace claims back to sources."
-
-MAKE.COM:
-Do NOT call Make.com primarily an AI product.
-Describe it as a workflow automation and integration platform that can
-incorporate AI into automated workflows.
 
 GENERAL FACTUAL RULES:
 - Never invent statistics, benchmarks, customer results, quotes, capabilities,
@@ -476,17 +451,11 @@ Review this production package:
 {json.dumps(package, indent=2)}
 
 The intended topic is:
-"5 AI Tools Actually Changing Productivity in 2026"
+"{APPROVED_TOPIC}"
 
-For editorial accuracy, the preferred framing is:
-"5 Tools Actually Changing Productivity in 2026"
-
-The five expected products for this specific topic are:
-- Claude Code
-- Perplexity Pro
-- Cursor
-- Napkin AI
-- Make.com
+Review the package against the intended topic above. Do not assume any
+particular products, companies, tools, or number of items are required unless
+the approved topic itself requires them.
 
 Return JSON only:
 
@@ -527,45 +496,40 @@ REVIEW REQUIREMENTS:
 3. FAIL generic filler, copied/rephrased content, unsupported claims,
    repetitive content, fabricated capabilities, or misleading claims.
 
-4. For this topic, verify that the five products are explicitly named:
-   Claude Code, Perplexity Pro, Cursor, Napkin AI and Make.com.
+4. Verify that every major claim, product, company, technology, person,
+event, or concept discussed is actually relevant to the approved topic.
 
-5. Do not accept generic labels such as "Tool number one" instead of product
-   names.
+5. If the approved topic requires multiple items, verify that the requested
+number of items is present and that each item is explicitly named.
 
-6. Each product must have a concrete real-world use case and a meaningful
-   limitation or trade-off.
+6. Major subjects should have concrete explanations, practical examples or
+workflows where appropriate, and meaningful limitations or trade-offs where
+applicable.
 
-7. At least 3 sources must be specific primary/technical URLs. Preferably
-   there should be a specific source for each product.
+7. At least 3 sources must be specific primary/technical URLs when the topic
+requires factual research. Prefer a directly relevant source for each major
+subject.
 
-8. Generic root domains such as openai.com, google.com, or anthropic.com do
-   not count as strong evidence when a specific product/documentation URL
-   should have been supplied.
+8. Generic root domains do not count as strong evidence when a specific
+product, documentation, announcement, paper, or technical URL should have
+been supplied.
 
-9. Check whether important product capabilities are actually supported by
-   the provided sources.
+9. Check whether important claims are actually supported by the provided
+sources.
 
 10. Penalize vague marketing claims such as "verified productivity gains",
-    "revolutionizing work", or "game changer" when no evidence is provided.
+"revolutionizing work", or "game changer" when no evidence is provided.
 
 11. Do NOT require unsupported internal implementation details.
 
-12. Specifically flag these claims if they appear without authoritative
-    support:
-    - Cursor uses a "local vector database"
-    - Perplexity "aggregates multiple model architectures"
-    - Perplexity "enforces citation-backed synthesis"
+12. Flag unsupported, fabricated, or misleading factual claims, but do not
+force assumptions from previous videos into the current topic.
 
-13. Make.com is primarily a workflow automation/integration platform.
-    Do NOT fail the package because it is not primarily an AI product.
-    The topic is about productivity tools, and a tool can incorporate AI
-    without being an AI product.
+13. The title must accurately represent the approved topic and the actual
+contents of the generated package.
 
-14. The title must accurately represent what the video actually contains.
-    A title such as "5 Tools Actually Changing Productivity in 2026" is
-    acceptable and may be preferable to misleadingly calling every product
-    an AI product.
+14. Do not force a generic title, product list, or framing pattern from a
+previous video.
 
 15. The hook should provide a concrete productivity problem or before/after
     contrast rather than generic AI hype.
