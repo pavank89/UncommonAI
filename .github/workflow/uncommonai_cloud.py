@@ -464,12 +464,62 @@ Schema:
             "Gemini must use at least 5 different visual types."
         )
 
-    for i in range(1, len(visual_types)):
-        if visual_types[i] == visual_types[i - 1]:
-            raise SystemExit(
-                f"Adjacent visual_type repetition at scenes {i} and {i + 1}: "
-                f"{visual_types[i]!r}"
+    # Gemini can occasionally repeat a visual type even when instructed not to.
+    # Repair adjacent duplicates deterministically instead of failing production.
+    preferred_by_scene = [
+        "hook",
+        "comparison",
+        "process",
+        "evidence",
+        "warning",
+        "timeline",
+        "process",
+        "takeaway",
+    ]
+
+    for i in range(1, len(scenes)):
+        if scenes[i]["visual_type"] == scenes[i - 1]["visual_type"]:
+            current = scenes[i]["visual_type"]
+            candidates = [
+                preferred_by_scene[i],
+                "comparison",
+                "process",
+                "timeline",
+                "evidence",
+                "warning",
+                "takeaway",
+                "hook",
+            ]
+
+            replacement = next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if candidate != current
+                    and candidate != scenes[i - 1]["visual_type"]
+                ),
+                None,
             )
+
+            if replacement:
+                print(
+                    f"Scene {i + 1}: repaired adjacent visual_type "
+                    f"{current!r} -> {replacement!r}"
+                )
+                scenes[i]["visual_type"] = replacement
+
+    visual_types = [scene["visual_type"] for scene in scenes]
+
+    # Require meaningful diversity, but allow the repair logic above to
+    # produce a valid package instead of making Gemini's occasional
+    # formatting mistake fatal.
+    unique_visual_types = len(set(visual_types))
+    if unique_visual_types < 5:
+        raise SystemExit(
+            "Insufficient visual diversity after repair: "
+            f"{unique_visual_types} unique visual types across 8 scenes. "
+            "At least 5 are required."
+        )
 
     phrases = [safe_text(s.get("key_phrase")).lower() for s in scenes]
     if len(set(phrases)) < 6:
