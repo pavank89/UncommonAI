@@ -1,755 +1,724 @@
-import os, json, re, urllib.request
+#!/usr/bin/env python3
+import json
+import os
+import random
+import re
+import shutil
+import subprocess
+import urllib.error
+import urllib.request
 from pathlib import Path
-import feedparser
 
-# GitHub Actions runs this script from the repository root.
-# Keep generated artifacts in <repo>/workspace/.
 ROOT = Path.cwd()
 WORK = ROOT / "workspace"
-WORK.mkdir(parents=True, exist_ok=True)
+VIDEO_DIR = WORK / "video"
+PACKAGE_FILE = WORK / "production_package.json"
+OUTPUT = WORK / "uncommonAI_video.mp4"
+VIDEO_DIR.mkdir(parents=True, exist_ok=True)
 
-MODE = os.getenv("UNCOMMONAI_MODE", "research").lower()
-APPROVED_TOPIC = os.getenv("APPROVED_TOPIC", "").strip()
+VOICE_PROVIDER = os.getenv("VOICE_PROVIDER", "auto").lower().strip()
+EDGE_VOICE = os.getenv("VIDEO_VOICE", "en-US-AriaNeural")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "").strip()
+ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2").strip()
+FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
-def safe_text(value):
-    """Normalize a value for validation and on-screen use."""
-    return re.sub(r"\s+", " ", str(value or "")).strip()
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
-
-FEEDS = {
-    "OpenAI": "https://openai.com/news/rss.xml",
-    "Google AI": "https://blog.google/technology/ai/rss/",
-    "Hugging Face": "https://huggingface.co/blog/feed.xml",
-    "TechCrunch AI": "https://techcrunch.com/category/artificial-intelligence/feed/",
-}
-
-ANGLE_RULES = [
-    (["robot", "robotics", "lerobot", "physical ai"],
-     "AI Agents Are Starting to Teach Robots — Here's Why It Matters"),
-    (["agent", "agents", "computer use"],
-     "AI Agents Are Becoming Useful — Here's What Changed"),
-    (["reasoning", "reasoning model"],
-     "AI Models Are Getting Better at Thinking — But There's a Catch"),
-    (["image", "video generation", "video model"],
-     "AI Can Now Create This — And It Changes What Creators Can Do"),
-    (["coding", "developer", "code"],
-     "AI Is Changing How Software Gets Built — Here's the Part Most People Miss"),
-    (["chip", "gpu", "accelerator"],
-     "The AI Hardware Race Is Changing — Here's What It Means"),
+PALETTE = [
+    {"accent": (255,184,77), "accent2": (255,214,128), "bg": (18,17,24), "panel": (37,33,45), "text": (247,247,250), "muted": (173,176,189)},
+    {"accent": (62,220,151), "accent2": (145,245,196), "bg": (13,20,19), "panel": (29,43,39), "text": (244,249,246), "muted": (169,187,180)},
+    {"accent": (174,105,255), "accent2": (215,170,255), "bg": (20,16,27), "panel": (39,30,51), "text": (248,245,251), "muted": (185,175,197)},
+    {"accent": (255,108,88), "accent2": (255,166,150), "bg": (24,17,18), "panel": (45,30,33), "text": (250,246,246), "muted": (190,173,176)},
+    {"accent": (65,190,255), "accent2": (145,225,255), "bg": (14,19,25), "panel": (27,39,50), "text": (244,248,250), "muted": (169,184,196)},
+    {"accent": (255,88,180), "accent2": (255,160,216), "bg": (25,15,23), "panel": (44,27,42), "text": (250,245,249), "muted": (190,171,185)},
+    {"accent": (86,151,255), "accent2": (160,195,255), "bg": (15,18,26), "panel": (24,29,43), "text": (244,247,251), "muted": (170,180,198)},
+    {"accent": (190,255,73), "accent2": (220,255,150), "bg": (19,22,14), "panel": (30,35,22), "text": (246,249,240), "muted": (180,189,162)},
 ]
 
-def gh_api(path, method="GET", body=None):
-    token = os.environ["GITHUB_TOKEN"]
-    data = None if body is None else json.dumps(body).encode()
-    req = urllib.request.Request("https://api.github.com" + path, data=data, method=method)
-    req.add_header("Authorization", f"Bearer {token}")
-    req.add_header("Accept", "application/vnd.github+json")
-    req.add_header("X-GitHub-Api-Version", "2022-11-28")
-    if data:
-        req.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read().decode())
 
-def repo():
-    return os.environ["GITHUB_REPOSITORY"]
+def run(cmd):
+    print("RUN:", " ".join(str(x) for x in cmd))
+    subprocess.run(cmd, check=True)
 
-def collect_news():
-    rows = []
-    for source, url in FEEDS.items():
-        try:
-            feed = feedparser.parse(url)
-            for e in feed.entries[:10]:
-                title = e.get("title", "").strip()
-                summary = re.sub("<[^>]+>", " ", e.get("summary", ""))
-                summary = re.sub(r"\s+", " ", summary).strip()
-                rows.append({
-                    "source": source, "title": title, "url": e.get("link", ""),
-                    "published": e.get("published", ""), "summary": summary[:900],
-                })
-        except Exception as exc:
-            print("Feed error:", source, exc)
-    return rows
 
-def score_item(r):
-    text = (r["title"] + " " + r["summary"]).lower()
-    keywords = ["agent","ai","model","openai","google","coding","robot","robotics",
-                "computer use","reasoning","image","video","developer","automation",
-                "chip","gpu","physical ai"]
-    score = sum(2 if k in r["title"].lower() else 1 for k in keywords if k in text)
-    for k in ["launch","release","new","demo","open source","available","integration","update","announces"]:
-        if k in text: score += 2
-    return score
+def safe_text(value):
+    return re.sub(r"\s+", " ", str(value or "")).strip()
 
-def youtube_angle(title, summary):
-    text = (title + " " + summary).lower()
-    for keys, angle in ANGLE_RULES:
-        if any(k in text for k in keys):
-            return angle
-    return "What This New AI Development Actually Means for You"
 
-def create_issue(title, body, labels=None):
-    return gh_api(f"/repos/{repo()}/issues", "POST",
-                  {"title": title, "body": body, "labels": labels or []})
+def font_fit(draw, text, path, max_size, min_size, max_width):
+    from PIL import ImageFont
+    for size in range(max_size, min_size - 1, -2):
+        f = ImageFont.truetype(path, size)
+        if draw.textbbox((0, 0), text, font=f)[2] <= max_width:
+            return f
+    return ImageFont.truetype(path, min_size)
 
-def list_open_issues():
-    return gh_api(f"/repos/{repo()}/issues?state=open&per_page=30")
 
-def open_issue_with_marker(marker):
-    for i in list_open_issues():
-        if marker in i.get("body", ""): return i
-    return None
+def wrap(draw, text, font, max_width, max_lines=None):
+    words = safe_text(text).split()
+    lines, current = [], ""
+    for word in words:
+        candidate = word if not current else f"{current} {word}"
+        if draw.textbbox((0, 0), candidate, font=font)[2] <= max_width:
+            current = candidate
+        else:
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines[:max_lines] if max_lines else lines
 
-def research():
-    rows = collect_news()
-    if not rows: raise SystemExit("No research signals found.")
-    ranked = sorted(rows, key=score_item, reverse=True)[:12]
-    lines = ["# uncommonAI Research", "",
-             "Original source headlines are separated from viewer-first concepts.", ""]
-    for i, r in enumerate(ranked, 1):
-        lines += [f"## {i}. {youtube_angle(r['title'], r['summary'])}",
-                  f"- Original source headline: {r['title']}",
-                  f"- Source: {r['source']}", f"- Published: {r['published']}",
-                  f"- URL: {r['url']}", f"- Evidence/context: {r['summary']}",
-                  f"- Research score: {score_item(r)}", ""]
-    (WORK / "research.md").write_text("\n".join(lines), encoding="utf-8")
 
-    top = ranked[0]
-    marker = "<!-- uncommonai-topic-approval -->"
-    body = f"""# uncommonAI topic approval
+def audio_duration(path):
+    return float(subprocess.check_output([
+        "ffprobe", "-v", "error", "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1", str(path)
+    ], text=True).strip())
 
-{marker}
 
-## Recommended YouTube concept
+def ass_time(seconds):
+    cs = int(round(seconds * 100))
+    h, cs = divmod(cs, 360000)
+    m, cs = divmod(cs, 6000)
+    s, cs = divmod(cs, 100)
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
-**{youtube_angle(top["title"], top["summary"])}**
 
-### Why this is interesting
-{top["summary"]}
+def ass_escape(text):
+    return safe_text(text).replace("{", "\\{").replace("}", "\\}")
 
-### Original source
-**{top["title"]}**
 
-Source: {top["url"]}
+def make_ass(text, duration, path):
+    words = safe_text(text).split() or ["uncommonAI"]
+    chunks = [" ".join(words[i:i + 7]) for i in range(0, len(words), 7)]
+    slot = max(float(duration), 1.0) / len(chunks)
+    lines = [
+        "[Script Info]",
+        "ScriptType: v4.00+",
+        "PlayResX: 1920",
+        "PlayResY: 1080",
+        "WrapStyle: 2",
+        "ScaledBorderAndShadow: yes",
+        "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+        "Style: Subtitle,DejaVu Sans,34,&H00FFFFFF,&H00FFFFFF,&H00101010,&H99000000,0,0,0,0,100,100,0,0,3,10,0,2,180,180,55,1",
+        "",
+        "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    ]
+    for i, chunk in enumerate(chunks):
+        start, end = i * slot, min((i + 1) * slot, duration)
+        # Force a soft two-line layout without changing the content.
+        if len(chunk) > 42:
+            parts = chunk.split()
+            mid = len(parts) // 2
+            chunk = " ".join(parts[:mid]) + "\\N" + " ".join(parts[mid:])
+        lines.append(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Subtitle,,0,0,55,,{ass_escape(chunk)}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-### Approval
-Comment **APPROVE** to start production.
-Comment **REJECT** to discard this idea.
 
-No publishing occurs from this approval step.
-"""
-    if not open_issue_with_marker(marker):
-        issue = create_issue("🎬 uncommonAI — approve next video topic", body, ["uncommonai:topic"])
-        print("Approval issue:", issue["html_url"])
+def rect(draw, box, fill, outline=None, width=1, radius=22):
+    draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
 
-def gemini_generate(prompt):
-    if not GEMINI_API_KEY:
-        raise SystemExit("GEMINI_API_KEY is missing.")
 
-    url = (
-        f"https://generativelanguage.googleapis.com/v1beta/"
-        f"models/{GEMINI_MODEL}:generateContent"
-        f"?key={GEMINI_API_KEY}"
-    )
+def center_text(draw, text, box, font, fill):
+    x1, y1, x2, y2 = box
+    bb = draw.textbbox((0, 0), text, font=font)
+    draw.text(((x1+x2-(bb[2]-bb[0]))/2, (y1+y2-(bb[3]-bb[1]))/2), text, font=font, fill=fill)
 
-    payload = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": prompt}
-                ]
-            }
-        ],
-        "generationConfig": {
-            "temperature": 0.2,
-            "responseMimeType": "application/json"
+
+
+def visual_keywords(scene, limit=4):
+    """
+    Extract useful visual labels from the producer package.
+
+    Priority:
+      1. explicit visual_labels/key_points/entities/visual_text
+      2. key_phrase/title/heading
+      3. visual_prompt
+      4. narration
+
+    The previous renderer ignored visual_prompt, which caused many scenes to
+    fall back to generic CHECK/RESULT labels even when Gemini had supplied
+    scene-specific visual instructions.
+    """
+    candidates = []
+
+    for key in (
+        "visual_labels",
+        "key_points",
+        "entities",
+        "visual_text",
+        "key_phrase",
+        "heading",
+        "title",
+    ):
+        value = scene.get(key)
+        if isinstance(value, list):
+            candidates.extend(value)
+        elif value:
+            candidates.append(value)
+
+    # visual_prompt is deliberately considered after explicit labels so prose
+    # prompts do not overwhelm concise labels, but before narration.
+    for key in ("visual_prompt", "narration"):
+        value = scene.get(key)
+        if value:
+            candidates.append(value)
+
+    stop = {
+        "the", "a", "an", "and", "or", "but", "for", "to", "of", "in", "on",
+        "with", "from", "into", "that", "this", "these", "those", "is", "are",
+        "was", "were", "be", "by", "as", "at", "it", "its", "their", "than",
+        "then", "when", "where", "how", "why", "what", "which", "can", "could",
+        "will", "would", "should", "not", "more", "less", "very", "just",
+        "show", "shows", "showing", "visual", "diagram", "illustrate",
+        "illustrates", "illustrating", "scene", "image", "use", "using",
+    }
+
+    labels = []
+
+    def add_label(value):
+        value = safe_text(value)
+        value = re.sub(
+            r"^(fact|point|step|result|example|label|node|box|input|output)\s*[:\-]\s*",
+            "",
+            value,
+            flags=re.I,
+        )
+        value = re.sub(r"^[•*\-\d.)\s]+", "", value)
+        value = value.strip(" ,.;:!?()[]{}\"'")
+
+        if not value:
+            return
+
+        words = value.split()
+        if len(words) > 6:
+            value = " ".join(words[:6])
+
+        if len(words) == 1 and value.lower() in stop:
+            return
+
+        normalized = re.sub(r"[^a-z0-9]+", "", value.lower())
+        if not normalized:
+            return
+
+        existing = {
+            re.sub(r"[^a-z0-9]+", "", x.lower())
+            for x in labels
         }
-    }
+        if normalized in existing:
+            return
 
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST"
-    )
+        # Reject renderer filler labels.
+        if value.upper() in {
+            "CHECK", "RESULT", "SYSTEM", "OUTPUT", "INPUT",
+            "TRADE-OFF", "DECISION", "LOW", "HIGH", "RISK", "VALUE",
+        }:
+            return
 
-    try:
-        with urllib.request.urlopen(req, timeout=120) as r:
-            data = json.loads(r.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode("utf-8", errors="replace")
-        print("GEMINI API ERROR:")
-        print(error_body)
-        raise
+        if 1 <= len(value.split()) <= 6 and len(value) <= 42:
+            labels.append(value)
 
-    try:
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError, TypeError) as e:
-        print("Unexpected Gemini response:")
-        print(json.dumps(data, indent=2))
-        raise SystemExit(f"Could not parse Gemini response: {e}")
-
-def parse_json(text):
-    text = text.strip()
-
-    # Remove Markdown code fences
-    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I)
-    text = re.sub(r"\s*```$", "", text)
-
-    # Normal JSON
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-
-    # Extract the first complete JSON object
-    start = text.find("{")
-    if start == -1:
-        print("GEMINI RESPONSE:")
-        print(text[:8000])
-        raise SystemExit("Gemini did not return a JSON object.")
-
-    try:
-        decoder = json.JSONDecoder()
-        result, _ = decoder.raw_decode(text[start:])
-        return result
-    except json.JSONDecodeError as e:
-        print("INVALID GEMINI JSON:")
-        print(text[:8000])
-        print("JSON ERROR:", e)
-        raise SystemExit("Could not parse Gemini JSON response.")
-
-def build_package(topic):
-    prompt = f"""
-You are the senior editorial producer for the faceless YouTube channel uncommonAI.
-
-Your job is NOT to make a generic AI-news slideshow. Create one distinctive,
-viewer-first story that could compete with a strong technology creator.
-
-APPROVED TOPIC:
-{topic}
-
-Create exactly ONE original 8-10 minute YouTube video package.
-
-NON-NEGOTIABLE LENGTH:
-- The complete "script" must contain 1200-1500 spoken words.
-- The script must be a genuinely developed long-form explanation, not a short
-  summary expanded with filler.
-- Each of the 8 scenes must contain substantial narration.
-- Target roughly 140-190 spoken words per scene.
-- The final script must be long enough for approximately 8-10 minutes at a
-  normal documentary narration pace.
-- Never satisfy the word count with repetition, padding, or generic transitions.
-
-==================== ORIGINALITY ====================
-Build a clear original thesis around the approved topic.
-
-Do NOT:
-- rewrite a source article;
-- paraphrase another creator's framing;
-- produce a generic "AI is changing everything" story;
-- use filler transitions;
-- invent statistics, quotes, benchmarks, tests, demos or capabilities.
-
-DO:
-- explain WHY the topic matters;
-- add interpretation and practical implications;
-- distinguish verified facts from analysis;
-- identify a limitation, trade-off, failure mode or surprising consequence;
-- use concrete technologies, workflows, users, businesses or mechanisms where supported;
-- make the conclusion specific and useful.
-
-The viewer should finish with at least one insight they would not get
-from simply reading the source headline.
-
-==================== STORY ====================
-Use this 8-scene editorial arc:
-
-1. Hook — surprising question, tension, failure, result or implication.
-2. Context — why the viewer should care now.
-3. Evidence — what is actually known or demonstrated.
-4. Mechanism — explain how/why it works.
-5. Real-world implication — what changes for users/businesses/developers.
-6. Limitation or failure mode — what the hype gets wrong.
-7. Practical takeaway — what the viewer should do or watch next.
-8. Memorable conclusion — one strong final idea.
-
-Avoid:
-- "In today's video"
-- "Let's dive in"
-- generic AI hype
-- repetitive scene introductions
-- unsupported claims
-- copied source headlines
-
-==================== VISUAL STORYTELLING ====================
-Create EXACTLY 8 scenes.
-
-Every scene MUST contain:
-- narration
-- visual_prompt
-- key_phrase: 3-8 words
-- visual_type
-- visual_labels: exactly 3-4 concise labels that will appear inside the visualization
-
-Allowed visual_type values:
-- hook
-- comparison
-- process
-- timeline
-- evidence
-- warning
-- takeaway
-
-The visual_type must describe the INFORMATION RELATIONSHIP, not merely a
-color, style or background.
-
-Examples:
-- comparison = A vs B, old vs new, human vs AI, before vs after
-- process = sequential workflow or mechanism
-- timeline = progression across time/stages
-- evidence = source/claim/finding relationship
-- warning = failure, risk, limitation or breakdown
-- takeaway = final decision, recommendation or conclusion
-- hook = visually striking opening concept
-
-CRITICAL VISUAL DIVERSITY RULES:
-- Use at least 5 DIFFERENT visual_type values across the 8 scenes.
-- Never use the same visual_type in adjacent scenes.
-- Do not make eight versions of a dark text card.
-- Do not repeat the same diagram composition.
-- Do not use generic INPUT -> PROCESS -> OUTPUT unless that relationship
-  is genuinely the point of the scene.
-- Prefer diagrams, comparisons, timelines, evidence chains, failure paths,
-  decision structures and concrete workflows.
-- Each visual_prompt must describe meaningful labels/elements from THAT scene.
-- Never invent numerical chart values. If there is no real data, use a
-  conceptual visualization instead of a fake graph.
-
-The visuals must help explain the narration, not merely decorate it.
-
-==================== TITLE ====================
-Create 3 possible titles internally and return the strongest one.
-
-The chosen title MUST:
-- clearly describe the actual story;
-- contain the important topic/entity;
-- create curiosity without clickbait;
-- normally be 45-75 characters;
-- never be "uncommonAI" or a generic AI title.
-
-Also create:
-- thumbnail_text: 2-6 words;
-- thumbnail_prompt: one strong visual concept, not a text-heavy slide.
-
-==================== SHORTS ====================
-Create exactly 3 genuinely different Shorts.
-
-Each Short MUST:
-- be 25-55 seconds;
-- have a different hook;
-- focus on a different insight;
-- be self-contained;
-- end with a useful takeaway;
-- NOT simply cut down scenes 1/2/3;
-- contain no unsupported claims.
-
-Each Short needs:
-- title
-- hook
-- script
-- visual_prompt
-
-==================== SOURCES ====================
-Include original source URLs in "sources".
-Never invent URLs. If a source URL is unavailable, do not fabricate one.
-
-==================== JSON ====================
-Return VALID JSON ONLY. No markdown fences. No comments.
-Every object key MUST use double quotes.
-
-Schema:
-{{
-  "title_options": ["...", "...", "..."],
-  "chosen_title": "...",
-  "title": "...",
-  "thumbnail_text": "...",
-  "description": "...",
-  "tags": ["..."],
-  "thumbnail_prompt": "...",
-  "script": "complete long-form narration",
-  "scenes": [
-    {{
-      "narration": "...",
-      "visual_prompt": "...",
-      "key_phrase": "...",
-      "visual_type": "hook",
-      "visual_labels": ["...", "...", "..."]
-    }}
-  ],
-  "shorts": [
-    {{
-      "title": "...",
-      "hook": "...",
-      "script": "...",
-      "visual_prompt": "..."
-    }}
-  ],
-  "sources": ["https://..."]
-}}
-"""
-
-    package = parse_json(gemini_generate(prompt))
-
-    if not isinstance(package, dict):
-        raise SystemExit("Gemini production response is not a JSON object.")
-
-    # Gemini can occasionally ignore the requested long-form length.
-    # Give it one controlled expansion pass rather than allowing a short
-    # script to reach the monetization gate.
-    initial_script = safe_text(package.get("script"))
-    initial_words = len(initial_script.split())
-
-    if initial_words < 1100:
-        expansion_prompt = f"""
-Rewrite and expand the following uncommonAI YouTube script into a genuinely
-developed 8-10 minute documentary-style script.
-
-NON-NEGOTIABLE:
-- Final length: 1200-1500 spoken words.
-- Preserve the exact approved topic and factual claims.
-- Do not invent facts, statistics, quotes, sources, products, tests or examples.
-- Add useful explanation, mechanisms, trade-offs, concrete implications and
-  transitions that advance the argument.
-- Do not pad with repetition or generic AI commentary.
-- Keep the same 8-scene structure.
-- Return JSON only with the same package structure.
-
-APPROVED TOPIC:
-{topic}
-
-CURRENT PACKAGE:
-{json.dumps(package, ensure_ascii=False)}
-
-Return the complete corrected JSON package.
-"""
-        print(
-            f"Initial script is only {initial_words} words; "
-            "requesting one controlled expansion pass."
-        )
-        package = parse_json(gemini_generate(expansion_prompt))
-
-        if not isinstance(package, dict):
-            raise SystemExit(
-                "Gemini expansion response is not a JSON object."
-            )
-
-    final_script = safe_text(package.get("script"))
-    final_words = len(final_script.split())
-
-    if final_words < 1000:
-        raise SystemExit(
-            f"Long-form script is too short after expansion: "
-            f"{final_words} words. Expected at least 1000."
-        )
-
-    if final_words > 1700:
-        print(
-            f"Warning: long-form script is {final_words} words; "
-            "renderer will use the complete script."
-        )
-
-    # Normalize title fields for compatibility with the existing renderers.
-    title = safe_text(package.get("chosen_title") or package.get("title"))
-    if not title:
-        raise SystemExit("Gemini did not generate a specific video title.")
-
-    package["title"] = title
-    package["chosen_title"] = title
-
-    scenes = package.get("scenes") or []
-    shorts = package.get("shorts") or []
-
-    if len(scenes) != 8:
-        raise SystemExit(f"Expected 8 scenes, found {len(scenes)}")
-    if len(shorts) != 3:
-        raise SystemExit(f"Expected 3 Shorts, found {len(shorts)}")
-
-    scene_word_counts = [
-        len(safe_text(scene.get("narration")).split())
-        for scene in scenes
-    ]
-
-    if sum(scene_word_counts) < 1000:
-        raise SystemExit(
-            "Scene narrations are collectively too short for a long-form video: "
-            f"{sum(scene_word_counts)} words."
-        )
-
-    allowed_visual_types = {
-        "hook",
-        "comparison",
-        "process",
-        "timeline",
-        "evidence",
-        "warning",
-        "takeaway",
-    }
-
-    # Normalize missing key phrases instead of failing an otherwise valid
-    # Gemini response.
-    for i, scene in enumerate(scenes, 1):
-        if not safe_text(scene.get("narration")):
-            raise SystemExit(f"Scene {i} has no narration.")
-
-        key_phrase = safe_text(scene.get("key_phrase"))
-        if not key_phrase:
-            source = (
-                scene.get("visual_prompt")
-                or scene.get("narration")
-                or ""
-            )
-            words = safe_text(source).split()
-            key_phrase = " ".join(words[:6]).strip(" ,.;:!?")
-            if not key_phrase:
-                key_phrase = f"Key insight {i}"
-            scene["key_phrase"] = key_phrase
-            print(
-                f"Scene {i}: missing key_phrase; generated fallback: "
-                f"{key_phrase}"
-            )
-
-        visual_type = safe_text(scene.get("visual_type")).lower()
-        if visual_type not in allowed_visual_types:
-            raise SystemExit(
-                f"Scene {i} has invalid visual_type: {visual_type!r}. "
-                f"Allowed: {sorted(allowed_visual_types)}"
-            )
-
-        if not safe_text(scene.get("visual_prompt")):
-            raise SystemExit(f"Scene {i} has no visual_prompt.")
-
-        raw_labels = scene.get("visual_labels")
-        if not isinstance(raw_labels, list):
-            raw_labels = []
-
-        labels = []
-        for value in raw_labels:
-            value = safe_text(value)
-            if not value:
+    for item in candidates:
+        if isinstance(item, str):
+            # Explicit short labels should stay intact.
+            if len(item.split()) <= 6:
+                add_label(item)
                 continue
-            if len(value.split()) > 5:
-                value = " ".join(value.split()[:5])
-            if len(value) > 38:
-                value = value[:38].rstrip()
-            if value.upper() in {
-                "CHECK", "RESULT", "SYSTEM", "OUTPUT", "INPUT",
-                "TRADE-OFF", "DECISION", "LOW", "HIGH", "RISK", "VALUE",
-            }:
-                continue
-            if value.lower() not in {x.lower() for x in labels}:
-                labels.append(value)
 
-        if len(labels) < 3:
-            # Robust fallback: derive compact labels from the scene's own
-            # visual prompt/key phrase rather than generic renderer filler.
-            source = safe_text(
-                scene.get("key_phrase")
-                or scene.get("visual_prompt")
-                or scene.get("narration")
-            )
-            words = [
-                w.strip(" ,.;:!?()[]{}\"'")
-                for w in source.split()
-            ]
-            for word in words:
-                if (
-                    len(word) >= 4
-                    and word.lower() not in {
-                        "show", "shows", "showing", "visual", "diagram",
-                        "timeline", "create", "illustrate", "illustrates",
-                        "scene", "with", "from", "into", "that", "this",
-                    }
-                ):
-                    if word.lower() not in {x.lower() for x in labels}:
-                        labels.append(word)
-                if len(labels) >= 3:
-                    break
-
-        if len(labels) < 3:
-            raise SystemExit(
-                f"Scene {i} does not have enough meaningful visual_labels."
+            # For prose, extract meaningful noun-like phrases from common
+            # separators used by Gemini visual prompts.
+            pieces = re.split(
+                r"[|;•\n]|(?:\s+→\s+)|(?:\s+->\s+)|(?:\s+vs\.?\s+)|"
+                r"(?:\s+versus\s+)",
+                item,
+                flags=re.I,
             )
 
-        scene["visual_labels"] = labels[:4]
-        scene["visual_type"] = visual_type
-
-    visual_types = [scene["visual_type"] for scene in scenes]
-    unique_visual_types = len(set(visual_types))
-
-    if unique_visual_types < 5:
-        raise SystemExit(
-            "Insufficient visual diversity: "
-            f"{unique_visual_types} unique visual types across 8 scenes. "
-            "Gemini must use at least 5 different visual types."
-        )
-
-    # Gemini can occasionally repeat a visual type even when instructed not to.
-    # Repair adjacent duplicates deterministically instead of failing production.
-    preferred_by_scene = [
-        "hook",
-        "comparison",
-        "process",
-        "evidence",
-        "warning",
-        "timeline",
-        "process",
-        "takeaway",
-    ]
-
-    for i in range(1, len(scenes)):
-        if scenes[i]["visual_type"] == scenes[i - 1]["visual_type"]:
-            current = scenes[i]["visual_type"]
-            candidates = [
-                preferred_by_scene[i],
-                "comparison",
-                "process",
-                "timeline",
-                "evidence",
-                "warning",
-                "takeaway",
-                "hook",
-            ]
-
-            replacement = next(
-                (
-                    candidate
-                    for candidate in candidates
-                    if candidate != current
-                    and candidate != scenes[i - 1]["visual_type"]
-                ),
-                None,
-            )
-
-            if replacement:
-                print(
-                    f"Scene {i + 1}: repaired adjacent visual_type "
-                    f"{current!r} -> {replacement!r}"
+            for piece in pieces:
+                piece = re.sub(
+                    r"^(show|display|illustrate|illustrating|depict|depicts|"
+                    r"create|draw|animate|use)\s+",
+                    "",
+                    piece.strip(),
+                    flags=re.I,
                 )
-                scenes[i]["visual_type"] = replacement
+                add_label(piece)
 
-    visual_types = [scene["visual_type"] for scene in scenes]
+            # If the prompt is still prose, capture compact title-case or
+            # uppercase concepts rather than the first arbitrary words.
+            phrases = re.findall(
+                r"\b(?:[A-Z][A-Za-z0-9/&+-]*(?:\s+[A-Z][A-Za-z0-9/&+-]*){0,4})\b",
+                item,
+            )
+            for phrase in phrases:
+                add_label(phrase)
 
-    # Require meaningful diversity, but allow the repair logic above to
-    # produce a valid package instead of making Gemini's occasional
-    # formatting mistake fatal.
-    unique_visual_types = len(set(visual_types))
-    if unique_visual_types < 5:
-        raise SystemExit(
-            "Insufficient visual diversity after repair: "
-            f"{unique_visual_types} unique visual types across 8 scenes. "
-            "At least 5 are required."
+        if len(labels) >= limit:
+            break
+
+    # Final fallback: derive compact concepts from the scene title/narration.
+    if len(labels) < limit:
+        text = safe_text(
+            scene.get("title")
+            or scene.get("heading")
+            or scene.get("key_phrase")
+            or scene.get("narration")
+        )
+        words = [
+            re.sub(r"[^A-Za-z0-9/&+-]", "", w)
+            for w in text.split()
+        ]
+        words = [w for w in words if len(w) >= 4 and w.lower() not in stop]
+
+        for word in words:
+            add_label(word)
+            if len(labels) >= limit:
+                break
+
+    return labels[:limit] or ["KEY IDEA", "MECHANISM", "IMPLICATION", "TAKEAWAY"]
+
+def visual_kind(scene, index, previous=None):
+    """Choose a visual treatment from scene meaning, while preventing adjacent repeats."""
+    explicit = safe_text(scene.get("visual_type") or scene.get("visual") or scene.get("diagram")).lower()
+    aliases = {
+        "comparison": "compare", "process": "flow", "workflow": "flow",
+        "system": "architecture", "stack": "architecture", "steps": "steps",
+        "data": "metrics", "chart": "metrics", "trend": "metrics",
+        "warning": "risk", "failure": "risk", "fact": "evidence",
+        "claim": "evidence", "quote": "quote", "timeline": "timeline",
+        "journey": "journey", "decision": "decision", "matrix": "matrix",
+        # Producer-facing names that must map to an actual renderer.
+        "hook": "journey",
+        "takeaway": "decision",
+    }
+    for key, value in aliases.items():
+        if key in explicit:
+            return value
+
+    text = safe_text(scene.get("title")) + " " + safe_text(scene.get("heading")) + " " + safe_text(scene.get("narration"))
+    text = text.lower()
+    candidates = []
+    if any(k in text for k in ("before", "after", "versus", " vs ", "compare", "compared")):
+        candidates.append("compare")
+    if any(k in text for k in ("risk", "failure", "broke", "broken", "danger", "problem", "missed")):
+        candidates.append("risk")
+    if any(k in text for k in ("step", "workflow", "process", "pipeline", "first", "then", "finally")):
+        candidates.append("flow")
+    if any(k in text for k in ("architecture", "system", "stack", "component", "layer")):
+        candidates.append("architecture")
+    if any(k in text for k in ("metric", "data", "percentage", "%", "rate", "latency", "score", "growth")):
+        candidates.append("metrics")
+    if any(k in text for k in ("timeline", "over time", "evolution", "history")):
+        candidates.append("timeline")
+    if any(k in text for k in ("evidence", "fact", "source", "study", "research")):
+        candidates.append("evidence")
+    if any(k in text for k in ("decision", "choose", "tradeoff", "should")):
+        candidates.append("decision")
+
+    rotation = ["flow", "compare", "architecture", "risk", "journey", "evidence", "metrics", "decision", "steps", "timeline", "quote", "matrix"]
+    for kind in candidates + rotation:
+        if kind != previous:
+            return kind
+    return rotation[index % len(rotation)]
+
+
+def draw_header(draw, text, area, p, font):
+    x, y, w, h = area
+    draw.text((x, y), safe_text(text).upper()[:44], font=font, fill=p["accent"])
+
+
+def draw_visual(draw, kind, area, p, scene=None):
+    from PIL import ImageFont
+    x, y, w, h = area
+    scene = scene or {}
+    labels = visual_keywords(scene, 4)
+    title_font = ImageFont.truetype(BOLD, 28)
+    label_font = ImageFont.truetype(BOLD, 24)
+    body_font = ImageFont.truetype(FONT, 21)
+    big_font = ImageFont.truetype(BOLD, 58)
+
+    # Use the scene's own words rather than generic filler whenever possible.
+    if kind == "flow":
+        steps = (labels + ["IMPLICATION", "RESULT"])[:4]
+        bw = (w - 75) / 4
+        by = y + 125
+        for i, text in enumerate(steps):
+            bx = x + i * (bw + 25)
+            rect(draw, (bx, by, bx + bw, by + 220), p["panel"], p["accent"], 3, 24)
+            center_text(draw, f"{i+1:02d}", (bx, by+18, bx+bw, by+70), label_font, p["accent"])
+            center_text(draw, text.upper()[:25], (bx+18, by+75, bx+bw-18, by+180), label_font, p["text"])
+            if i < 3:
+                draw.line((bx+bw+5, by+110, bx+bw+18, by+110), fill=p["accent2"], width=5)
+                draw.polygon([(bx+bw+18,by+110),(bx+bw+4,by+100),(bx+bw+4,by+120)], fill=p["accent2"])
+
+    elif kind == "compare":
+        pairs = labels[:3] if len(labels) >= 3 else ["BEFORE", "AI", "AFTER"]
+        bw, gap = 420, 35
+        total = 3*bw + 2*gap
+        start = x + (w-total)/2
+        by = y + 105
+        for i, text in enumerate(pairs):
+            bx = start + i*(bw+gap)
+            rect(draw, (bx, by, bx+bw, by+300), p["panel"], p["accent"], 3, 26)
+            center_text(draw, ["A", "B", "C"][i], (bx, by+22, bx+bw, by+78), big_font, p["accent"])
+            center_text(draw, text.upper()[:24], (bx+25, by+105, bx+bw-25, by+215), label_font, p["text"])
+            if i < 2:
+                draw.line((bx+bw+4, by+150, bx+bw+gap-8, by+150), fill=p["muted"], width=4)
+
+    elif kind == "architecture":
+        nodes = (labels + ["SYSTEM", "OUTCOME"])[:4]
+        bw = 330
+        gap = 55
+        total = 4*bw + 3*gap
+        start = x + (w-total)/2
+        cy = y + 235
+        for i, text in enumerate(nodes):
+            bx = start + i*(bw+gap)
+            rect(draw, (bx, cy-100, bx+bw, cy+100), p["panel"], p["accent"], 3, 25)
+            center_text(draw, f"{i+1}", (bx, cy-80, bx+bw, cy-25), label_font, p["accent"])
+            center_text(draw, text.upper()[:22], (bx+15, cy-5, bx+bw-15, cy+70), label_font, p["text"])
+            if i < 3:
+                draw.line((bx+bw+6, cy, bx+bw+gap-10, cy), fill=p["accent2"], width=5)
+                draw.polygon([(bx+bw+gap-10,cy),(bx+bw+gap-28,cy-11),(bx+bw+gap-28,cy+11)], fill=p["accent2"])
+
+    elif kind == "risk":
+        cx, cy = x+w/2, y+h/2
+        draw.polygon([(cx,cy-175),(cx-170,cy+125),(cx+170,cy+125)], fill=p["panel"], outline=p["accent"])
+        center_text(draw, "!", (cx-80,cy-115,cx+80,cy+50), ImageFont.truetype(BOLD,125), p["accent"])
+        risk_label = labels[0] if labels else "RISK"
+        center_text(draw, risk_label.upper()[:25], (x+150,cy+40,x+w-150,cy+105), label_font, p["text"])
+        center_text(draw, "HUMAN REVIEW", (x+180,y+h-75,x+w-180,y+h-20), body_font, p["accent2"])
+
+    elif kind == "metrics":
+        # Qualitative visualization only unless actual numeric data is supplied.
+        bars = labels[:3] if len(labels) >= 3 else ["SIGNAL", "CHANGE", "RESULT"]
+        bx, by, bw = x+170, y+110, w-340
+        for i, text in enumerate(bars):
+            yy = by + i*105
+            draw.text((bx, yy), text.upper()[:28], font=label_font, fill=p["text"])
+            for dot in range(5):
+                px = bx + bw - 180 + dot*36
+                fill = p["accent"] if dot <= i else p["bg"]
+                draw.ellipse((px-9, yy+46, px+9, yy+64), fill=fill, outline=p["muted"])
+        draw.text((bx, by+345), "QUALITATIVE SIGNAL — NO INVENTED NUMBERS", font=body_font, fill=p["muted"])
+
+    elif kind == "timeline":
+        events = (labels + ["NEXT"])[:4]
+        yy = y + 230
+        x1, x2 = x+130, x+w-130
+        draw.line((x1,yy,x2,yy), fill=p["muted"], width=5)
+        for i, text in enumerate(events):
+            px = x1 + i*(x2-x1)/max(1,len(events)-1)
+            draw.ellipse((px-25,yy-25,px+25,yy+25), fill=p["accent"])
+            center_text(draw, f"{i+1}", (px-25,yy-25,px+25,yy+25), label_font, p["bg"])
+            center_text(draw, text.upper()[:22], (px-115,yy+55,px+115,yy+110), body_font, p["text"])
+
+    elif kind == "journey":
+        events = (labels + ["OUTCOME"])[:4]
+        for i, text in enumerate(events):
+            bx = x + 90 + i*((w-180)/4)
+            cy = y + 225 + (25 if i % 2 else -25)
+            draw.ellipse((bx-52,cy-52,bx+52,cy+52), fill=p["panel"], outline=p["accent"], width=4)
+            center_text(draw, str(i+1), (bx-40,cy-40,bx+40,cy+40), big_font, p["accent"])
+            center_text(draw, text.upper()[:18], (bx-100,cy+70,bx+100,cy+120), body_font, p["text"])
+            if i < len(events)-1:
+                nx = x + 90 + (i+1)*((w-180)/4)
+                draw.line((bx+58,cy,nx-58,cy), fill=p["muted"], width=4)
+
+    elif kind == "evidence":
+        claim = safe_text(scene.get("key_claim") or scene.get("claim") or (labels[0] if labels else "KEY FINDING"))
+        source = safe_text(scene.get("source") or scene.get("citation") or "SOURCE / EVIDENCE")
+        rect(draw,(x+100,y+75,x+w-100,y+h-65),p["panel"],p["accent"],3,30)
+        draw.text((x+150,y+120),"EVIDENCE",font=title_font,fill=p["accent"])
+        lines = wrap(draw, claim, label_font, w-350, 3)
+        yy=y+190
+        for line in lines:
+            center_text(draw,line,(x+150,yy,x+w-150,yy+55),label_font,p["text"]); yy+=65
+        draw.line((x+150,y+h-175,x+w-150,y+h-175),fill=p["muted"],width=2)
+        center_text(draw,source[:60],(x+150,y+h-150,x+w-150,y+h-95),body_font,p["muted"])
+
+    elif kind == "decision":
+        options = (labels + ["TRADE-OFF", "DECISION"])[:3]
+        for i,text in enumerate(options):
+            bx=x+120+i*430; by=y+135
+            rect(draw,(bx,by,bx+350,by+210),p["panel"],p["accent"] if i==2 else p["muted"],3,26)
+            center_text(draw,str(i+1),(bx,by+20,bx+350,by+80),big_font,p["accent"] if i==2 else p["muted"])
+            center_text(draw,text.upper()[:20],(bx+20,by+95,bx+330,by+165),label_font,p["text"])
+            if i<2:
+                draw.line((bx+355,by+105,bx+420,by+105),fill=p["muted"],width=4)
+        center_text(draw,"CHOOSE BASED ON CONTEXT",(x+200,y+h-75,x+w-200,y+h-25),body_font,p["accent2"])
+
+    elif kind == "steps":
+        steps = (labels + ["IMPLICATION", "OUTCOME"])[:4]
+        bw=(w-60)/2; gapx,gapy=60,45; by=y+35
+        for i,text in enumerate(steps):
+            row,col=divmod(i,2); bx=x+col*(bw+gapx); yy=by+row*(155+gapy)
+            rect(draw,(bx,yy,bx+bw,yy+155),p["panel"],p["accent"],3,24)
+            center_text(draw,f"{i+1}",(bx+18,yy+18,bx+80,yy+75),label_font,p["accent"])
+            center_text(draw,text.upper()[:25],(bx+70,yy+35,bx+bw-20,yy+120),label_font,p["text"])
+
+    elif kind == "quote":
+        quote = safe_text(scene.get("quote") or scene.get("key_claim") or (labels[0] if labels else "KEY IDEA"))
+        rect(draw,(x+150,y+70,x+w-150,y+h-70),p["panel"],p["accent"],3,30)
+        center_text(draw,'“',(x+210,y+85,x+330,y+220),ImageFont.truetype(BOLD,105),p["accent"])
+        lines=wrap(draw,quote,label_font,w-420,4); yy=y+220
+        for line in lines:
+            center_text(draw,line,(x+220,yy,x+w-220,yy+52),label_font,p["text"]); yy+=60
+        center_text(draw,"ORIGINAL COMMENTARY",(x+250,y+h-145,x+w-250,y+h-90),body_font,p["muted"])
+
+    else:  # matrix
+        size=165; gap=30; gx=x+w/2-size-gap/2; gy=y+95
+        labels2=(labels+["LOW","HIGH","RISK","VALUE"])[:4]
+        for r in range(2):
+            for c in range(2):
+                bx=gx+c*(size+gap); by=gy+r*(size+gap)
+                rect(draw,(bx,by,bx+size,by+size),p["panel"],p["accent"],3)
+                center_text(draw,labels2[r*2+c].upper()[:14],(bx+10,by+35,bx+size-10,by+125),label_font,p["text"])
+
+def make_card(scene, index, title, p, path, visual_path=None):
+    from PIL import Image, ImageDraw, ImageFont
+    W,H = 1920,1080
+    img = Image.new("RGB", (W,H), p["bg"])
+    draw = ImageDraw.Draw(img)
+    rect(draw,(45,45,W-45,H-45),p["bg"],p["accent"],3,28)
+    top = ImageFont.truetype(BOLD, 25)
+    scene_f = ImageFont.truetype(FONT, 23)
+    draw.text((85,82),"uncommonAI",font=top,fill=p["text"])
+    draw.text((W-245,85),f"SCENE {index:02d}",font=scene_f,fill=p["muted"])
+    draw.rounded_rectangle((85,118,W-85,128),radius=5,fill=p["panel"])
+    draw.rounded_rectangle((85,118,85+int((W-170)*min(index/8,1.0)),128),radius=5,fill=p["accent"])
+
+    title_f = font_fit(draw,title,BOLD,68,42,1580)
+    title_lines = wrap(draw,title,title_f,1580,2)
+    yy=155
+    for line in title_lines:
+        bb=draw.textbbox((0,0),line,font=title_f)
+        draw.text(((W-(bb[2]-bb[0]))/2,yy),line,font=title_f,fill=p["text"])
+        yy += bb[3]-bb[1]+8
+
+    # Large visual zone; no text is allowed in subtitle zone below 900.
+    # V14 moves the visual layer into a separate transparent image so it can
+    # animate independently from the editorial card.
+    rect(draw,(90,340,W-90,870),p["panel"],p["accent"],2,30)
+
+    if visual_path:
+        from PIL import Image
+        layer=Image.new("RGBA",(W,H),(0,0,0,0))
+        ld=ImageDraw.Draw(layer)
+        rect(ld,(90,340,W-90,870),p["panel"],p["accent"],2,30)
+        kind=scene.get("_renderer_visual_kind") or visual_kind(scene,index)
+        draw_visual(ld,kind,(145,385,W-290,450),p,scene)
+        layer.save(visual_path)
+
+    # Tiny branded footer only above the subtitle-safe zone.
+    draw.line((90,900,W-90,900),fill=p["accent"],width=2)
+    foot=ImageFont.truetype(FONT,21)
+    draw.text((90,922),"AI-assisted research • original commentary",font=foot,fill=p["muted"])
+    img.save(path,quality=95)
+
+
+def generate_voice(text, output_path):
+    """
+    Generate narration using the selected voice backend.
+
+    VOICE_PROVIDER:
+      auto        -> ElevenLabs when credentials are present, otherwise Edge TTS
+      elevenlabs  -> require ElevenLabs credentials
+      edge        -> always use Edge TTS
+
+    This keeps the renderer backward-compatible while allowing a personal
+    ElevenLabs voice clone to be introduced without changing the renderer.
+    """
+    output_path = Path(output_path)
+
+    use_eleven = (
+        VOICE_PROVIDER == "elevenlabs"
+        or (
+            VOICE_PROVIDER == "auto"
+            and ELEVENLABS_API_KEY
+            and ELEVENLABS_VOICE_ID
+        )
+    )
+
+    if use_eleven:
+        if not ELEVENLABS_API_KEY or not ELEVENLABS_VOICE_ID:
+            raise SystemExit(
+                "VOICE_PROVIDER=elevenlabs requires "
+                "ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID."
+            )
+
+        url = (
+            "https://api.elevenlabs.io/v1/text-to-speech/"
+            f"{ELEVENLABS_VOICE_ID}"
         )
 
-    phrases = [safe_text(s.get("key_phrase")).lower() for s in scenes]
-    if len(set(phrases)) < 6:
-        raise SystemExit(
-            "Scene key phrases are too repetitive; at least 6 unique "
-            "key phrases are required."
+        payload = {
+            "text": safe_text(text),
+            "model_id": ELEVENLABS_MODEL,
+            "voice_settings": {
+                "stability": 0.48,
+                "similarity_boost": 0.82,
+                "style": 0.18,
+                "use_speaker_boost": True,
+            },
+        }
+
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "xi-api-key": ELEVENLABS_API_KEY,
+                "Content-Type": "application/json",
+                "Accept": "audio/mpeg",
+            },
+            method="POST",
         )
 
-    package["scenes"] = scenes
-    package["shorts"] = shorts
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                output_path.write_bytes(response.read())
+            print(f"TTS: ElevenLabs voice clone -> {output_path}")
+            return
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            if VOICE_PROVIDER == "elevenlabs":
+                print("ELEVENLABS API ERROR:")
+                print(body[:4000])
+                raise SystemExit(
+                    f"ElevenLabs narration failed with HTTP {exc.code}."
+                )
+            print(
+                f"ElevenLabs unavailable (HTTP {exc.code}); "
+                "falling back to Edge TTS."
+            )
+        except Exception as exc:
+            if VOICE_PROVIDER == "elevenlabs":
+                raise SystemExit(
+                    f"ElevenLabs narration failed: {exc}"
+                )
+            print(
+                f"ElevenLabs unavailable ({exc}); "
+                "falling back to Edge TTS."
+            )
 
-    (WORK / "package.json").write_text(
-        json.dumps(package, indent=2),
-        encoding="utf-8",
+    run([
+        "edge-tts",
+        "--voice",
+        EDGE_VOICE,
+        "--text",
+        safe_text(text),
+        "--write-media",
+        str(output_path),
+    ])
+    print(f"TTS: Edge TTS ({EDGE_VOICE}) -> {output_path}")
+
+
+def render_scene(index, scene, title, p):
+    audio=VIDEO_DIR/f"scene_{index:02d}.mp3"
+    image=VIDEO_DIR/f"scene_{index:02d}.png"
+    visual_layer=VIDEO_DIR/f"scene_{index:02d}_visual.png"
+    ass=VIDEO_DIR/f"scene_{index:02d}.ass"
+    out=VIDEO_DIR/f"segment_{index:02d}.mp4"
+    narration=safe_text(scene.get("narration"))
+    if not narration: raise SystemExit(f"Scene {index} has no narration.")
+    scene_title=safe_text(scene.get("title") or scene.get("heading") or scene.get("key_phrase") or f"Scene {index}")
+    generate_voice(narration, audio)
+    duration=audio_duration(audio)
+    make_card(scene,index,scene_title,p,image,visual_layer)
+    make_ass(narration,duration,ass)
+    ass_path=str(ass).replace("\\","/").replace(":","\\:").replace("'","\\'")
+    # V14.2 animation: use the visual PNG as a real looping FFmpeg input.
+    # The previous movie-filter approach could silently produce an empty
+    # overlay on GitHub runners. A dedicated -loop 1 input is deterministic.
+    # Subtitles are applied last so motion never disturbs the subtitle-safe zone.
+    base=(
+        "scale=1970:1108,"
+        "zoompan=z='1.0+0.018*min(on/(30*2.5),1)':"
+        "x='iw/2-(iw/zoom/2)+6*sin(on/55)':"
+        "y='ih/2-(ih/zoom/2)+4*cos(on/63)':"
+        "d=1:s=1920x1080:fps=30"
+        "[base]"
     )
-
-    print(
-        "Production package generated: "
-        f"{len(scenes)} scenes, {unique_visual_types} visual types."
+    vf=(
+        f"[0:v]{base};"
+        "[2:v]format=rgba,setpts=PTS-STARTPTS,"
+        "scale=1970:1108,"
+        "zoompan=z='1.0+0.025*min(on/(30*0.8),1)':"
+        "x='iw/2-(iw/zoom/2)':"
+        "y='ih/2-(ih/zoom/2)':"
+        "d=1:s=1970x1108:fps=30,"
+        "fade=t=in:st=0:d=0.55:alpha=1[vl];"
+        "[base][vl]"
+        "overlay=x=0:"
+        "y='if(lt(t,0.55),28*(1-t/0.55),0)':"
+        "format=auto[composite];"
+        "[composite]"
+        "drawbox="
+        "x='if(lt(t,0.9),80+(iw-240)*t/0.9,iw-160)':"
+        "y=126:w=120:h=4:color=white@0.45:t=fill,"
+        "fade=t=in:st=0:d=0.25,"
+        f"subtitles='{ass_path}'[vout]"
     )
+    run([
+        "ffmpeg","-y",
+        "-loop","1","-i",str(image),
+        "-i",str(audio),
+        "-loop","1","-i",str(visual_layer),
+        "-filter_complex",vf,
+        "-map","[vout]",
+        "-map","1:a",
+        "-c:v","libx264",
+        "-preset","veryfast",
+        "-tune","stillimage",
+        "-pix_fmt","yuv420p",
+        "-c:a","aac",
+        "-b:a","192k",
+        "-shortest",
+        "-t",str(duration),
+        "-movflags","+faststart",
+        str(out)
+    ])
+    if not out.exists() or out.stat().st_size==0: raise SystemExit(f"Scene {index} was not created correctly.")
+    return out
 
-    return package
 
-def quality_gate(package):
-    prompt = f"""
-Act as a strict YouTube editorial and YPP-quality reviewer.
+def main():
+    if not PACKAGE_FILE.exists(): raise SystemExit(f"Missing {PACKAGE_FILE}")
+    for tool in ("ffmpeg", "ffprobe"):
+        if not shutil.which(tool):
+            raise SystemExit(f"{tool} is not installed.")
 
-Review this package:
-{json.dumps(package, indent=2)}
-
-Return JSON only:
-{{
-"pass": true,
-"originality": 0,
-"viewer_value": 0,
-"evidence_quality": 0,
-"repetition_risk": 0,
-"copyright_risk": 0,
-"ypp_risk": 0,
-"title_quality": 0,
-"hook_quality": 0,
-"fixes": []
-}}
-
-Fail if it is generic filler, mainly copied/rephrased, unsupported, repetitive,
-or lacks meaningful original explanation/commentary.
-"""
-    gate = parse_json(gemini_generate(prompt))
-    (WORK / "quality_gate.json").write_text(json.dumps(gate, indent=2), encoding="utf-8")
-    return gate
-
-def produce():
-    if not APPROVED_TOPIC:
-        raise SystemExit("APPROVED_TOPIC is missing.")
-
-    package = build_package(APPROVED_TOPIC)
-
-    gate = quality_gate(package)
-
-    if not gate.get("pass"):
-        print("QUALITY GATE RESULT:")
-        print(json.dumps(gate, indent=2))
-        raise SystemExit("Quality gate failed.")
-
-    title = package.get(
-        "chosen_title",
-        package.get("title_options", ["UncommonAI video"])[0]
-    )
-
-    # Save the complete production package
-    (WORK / "production_package.json").write_text(
-        json.dumps(package, indent=2),
-        encoding="utf-8"
-    )
-
-    # Create a human-readable production brief
-    body = (
-        "# uncommonAI — production ready\n\n"
-        f"## Topic\n{APPROVED_TOPIC}\n\n"
-        f"## Title\n{title}\n\n"
-        "## Production package\n\n"
-        "The AI-generated production package has passed the "
-        "quality gate and is ready for review.\n\n"
-        "Review the accompanying production_package.json artifact "
-        "before publishing.\n\n"
-        "## Quality gate\n\n"
-        f"```json\n{json.dumps(gate, indent=2)}\n```\n"
-    )
-
-    (WORK / "production.md").write_text(
-        body,
-        encoding="utf-8"
-    )
-
-    print("Production package created successfully.")
-    print(f"Title: {title}")
-    print(f"Topic: {APPROVED_TOPIC}")
+    # Edge TTS remains available as the safe fallback in auto mode.
+    use_eleven_only = VOICE_PROVIDER == "elevenlabs"
+    if not use_eleven_only and not shutil.which("edge-tts"):
+        if not (ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID):
+            raise SystemExit(
+                "Neither Edge TTS nor a configured ElevenLabs voice is available."
+            )
+    package=json.loads(PACKAGE_FILE.read_text(encoding="utf-8"))
+    scenes=package.get("scenes",[])
+    if len(scenes)<3: raise SystemExit(f"Expected at least 3 scenes, found {len(scenes)}")
+    for item in VIDEO_DIR.iterdir():
+        if item.is_file(): item.unlink()
+    palettes=PALETTE.copy(); random.SystemRandom().shuffle(palettes)
+    segments=[]
+    previous_kind = None
+    for i,scene in enumerate(scenes,1):
+        chosen_kind = visual_kind(scene, i, previous_kind)
+        scene = dict(scene)
+        scene["_renderer_visual_kind"] = chosen_kind
+        previous_kind = chosen_kind
+        segments.append(render_scene(i,scene,package.get("chosen_title") or package.get("title") or "uncommonAI",palettes[(i-1)%len(palettes)]))
+    concat=VIDEO_DIR/"segments.txt"
+    concat.write_text("\n".join(f"file '{p.resolve()}'" for p in segments)+"\n",encoding="utf-8")
+    run(["ffmpeg","-y","-f","concat","-safe","0","-i",str(concat),"-c","copy","-movflags","+faststart",str(OUTPUT)])
+    if not OUTPUT.exists() or OUTPUT.stat().st_size==0: raise SystemExit("Final MP4 was not created correctly.")
+    subprocess.run(["ffprobe","-v","error","-show_entries","format=duration,size","-show_entries","stream=codec_name,width,height","-of","default=noprint_wrappers=1",str(OUTPUT)],check=True)
+    print(f"V14 VIDEO CREATED: {OUTPUT} | {OUTPUT.stat().st_size} bytes")
 
 if __name__ == "__main__":
-    if MODE == "research": research()
-    elif MODE == "produce": produce()
-    else: raise SystemExit("UNCOMMONAI_MODE must be research or produce.")
+    main()
