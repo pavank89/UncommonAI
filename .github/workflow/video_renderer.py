@@ -334,7 +334,7 @@ def make_scene_card(
 
     # Visual zone. It has its own area and never shares space with subtitles.
     visual_top = 330
-    visual_bottom = 820
+    visual_bottom = 790
     draw.rounded_rectangle(
         (90, visual_top, W - 90, visual_bottom),
         radius=30,
@@ -357,44 +357,12 @@ def make_scene_card(
         palette["panel"],
     )
 
-    # Tiny supporting line, not the narration.
-    support_words = safe_text(narration).split()
-    support = " ".join(support_words[:12])
-    if len(support_words) > 12:
-        support += "…"
-
-    support_font = fit_font(
-        draw,
-        support,
-        normal_path,
-        max_size=30,
-        min_size=21,
-        max_width=1500,
-    )
-
-    support_lines = wrap_to_width(draw, support, support_font, 1500)[:1]
-    if support_lines:
-        bbox = draw.textbbox((0, 0), support_lines[0], font=support_font)
-        tw = bbox[2] - bbox[0]
-        draw.text(
-            ((W - tw) / 2, 850),
-            support_lines[0],
-            font=support_font,
-            fill=palette["muted"],
-        )
-
     # Dedicated subtitle-safe area below the visual.
+    # Dedicated subtitle-safe zone. No other text is drawn below this line.
     draw.line(
-        (90, 900, W - 90, 900),
+        (90, 855, W - 90, 855),
         fill=palette["accent"],
         width=2,
-    )
-
-    draw.text(
-        (90, 925),
-        "AI-assisted research • original commentary",
-        font=scene_font,
-        fill=palette["muted"],
     )
 
     img.save(path, quality=95)
@@ -448,18 +416,8 @@ def render_segment(
         .replace("'", "\\'")
     )
 
-    # Captions are rendered AFTER the visual motion transform so they remain
-    # at a stable size and position. They get their own dark translucent pill
-    # at the bottom instead of competing with the card content.
-    subtitle_path = (
-        str(srt)
-        .replace("\\", "/")
-        .replace(":", "\\:")
-        .replace("'", "\\'")
-    )
-
-    # First apply a very subtle zoom. Then render subtitles on the final
-    # 1920x1080 frame. This prevents the subtitle layer from being zoomed.
+    # Apply motion first, then subtitles. The subtitle layer is never zoomed
+    # and the bottom zone contains no card text, preventing overlap.
     motion_filter = (
         "scale=1980:1114,"
         "zoompan=z='min(zoom+0.00012,1.028)':"
@@ -471,7 +429,7 @@ def render_segment(
     subtitle_filter = (
         f"subtitles='{subtitle_path}':"
         "force_style='FontName=DejaVu Sans,"
-        "FontSize=18,"
+        "FontSize=22,"
         "Bold=0,"
         "PrimaryColour=&H00FFFFFF,"
         "OutlineColour=&H00000000,"
@@ -480,9 +438,9 @@ def render_segment(
         "Outline=0,"
         "Shadow=0,"
         "Alignment=2,"
-        "MarginL=180,"
-        "MarginR=180,"
-        "MarginV=38,"
+        "MarginL=220,"
+        "MarginR=220,"
+        "MarginV=42,"
         "WrapStyle=2'"
     )
 
@@ -630,7 +588,7 @@ def main():
     ], check=True)
 
     print("========================================")
-    print("V8 VIDEO CREATED")
+    print("V10 VIDEO CREATED")
     print(f"OUTPUT: {OUTPUT}")
     print(f"SIZE BYTES: {OUTPUT.stat().st_size}")
     print("========================================")
