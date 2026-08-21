@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -10,32 +9,100 @@ from pathlib import Path
 ROOT = Path.cwd()
 WORK = ROOT / "workspace"
 VIDEO_DIR = WORK / "video"
-VIDEO_DIR.mkdir(parents=True, exist_ok=True)
-
+SHORTS_DIR = WORK / "shorts"
 PACKAGE_FILE = WORK / "production_package.json"
-OUTPUT = WORK / "uncommonAI_video.mp4"
 
-VOICE = os.getenv("VIDEO_VOICE", "en-US-AriaNeural")
+SHORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+VOICE = "en-US-AriaNeural"
+
 
 def run(cmd):
     print("RUN:", " ".join(str(x) for x in cmd))
     subprocess.run(cmd, check=True)
 
+
 def safe_text(value):
     return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def make_card(title, short_number, narration, path):
+    from PIL import Image, ImageDraw, ImageFont
+
+    W, H = 1080, 1920
+    img = Image.new("RGB", (W, H), (14, 17, 23))
+    draw = ImageDraw.Draw(img)
+
+    bold_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    normal_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+
+    bold = ImageFont.truetype(bold_path, 58)
+    normal = ImageFont.truetype(normal_path, 38)
+    small = ImageFont.truetype(normal_path, 27)
+
+    draw.rectangle((45, 45, W - 45, H - 45), outline=(70, 78, 92), width=3)
+
+    draw.text((75, 85), "uncommonAI", font=bold, fill=(235, 238, 245))
+    draw.text(
+        (75, 175),
+        f"SHORT {short_number}",
+        font=small,
+        fill=(145, 154, 170),
+    )
+
+    wrapped_title = textwrap.wrap(title[:100], width=27)
+    y = 260
+    for line in wrapped_title[:4]:
+        draw.text((75, y), line, font=bold, fill=(245, 245, 248))
+        y += 72
+
+    wrapped = textwrap.wrap(narration, width=39)
+    y = 650
+
+    # Keep the text comfortably inside the vertical frame.
+    for line in wrapped[:20]:
+        draw.text((75, y), line, font=normal, fill=(215, 219, 228))
+        y += 54
+
+    draw.text(
+        (75, H - 135),
+        "AI-assisted research • uncommonAI",
+        font=small,
+        fill=(130, 138, 153),
+    )
+
+    img.save(path, quality=95)
+
+
+def audio_duration(audio):
+    value = subprocess.check_output(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(audio),
+        ],
+        text=True,
+    ).strip()
+
+    return float(value)
+
 
 def make_srt(text, duration, path):
     words = safe_text(text).split()
     if not words:
         words = ["uncommonAI"]
 
-    # Approximate word timing; captions are intentionally simple and robust.
-    chunks = []
-    for i in range(0, len(words), 10):
-        chunks.append(" ".join(words[i:i + 10]))
+    chunks = [
+        " ".join(words[i:i + 9])
+        for i in range(0, len(words), 9)
+    ]
 
-    total = max(float(duration), 1.0)
-    slot = total / len(chunks)
+    slot = max(float(duration), 1.0) / len(chunks)
 
     def stamp(seconds):
         ms = int(round(seconds * 1000))
@@ -46,150 +113,149 @@ def make_srt(text, duration, path):
 
     lines = []
     for i, chunk in enumerate(chunks, 1):
-        start = i - 1
-        end = i
-        lines += [str(i), f"{stamp(start * slot)} --> {stamp(end * slot)}", chunk, ""]
+        start = (i - 1) * slot
+        end = i * slot
+        lines.extend(
+            [
+                str(i),
+                f"{stamp(start)} --> {stamp(end)}",
+                chunk,
+                "",
+            ]
+        )
+
     path.write_text("\n".join(lines), encoding="utf-8")
 
-def make_card(title, scene_number, narration, path):
-    from PIL import Image, ImageDraw, ImageFont
 
-    W, H = 1920, 1080
-    img = Image.new("RGB", (W, H), (14, 17, 23))
-    draw = ImageDraw.Draw(img)
+def render_short(short_number, title, narration):
+    audio = SHORTS_DIR / f"short_{short_number:02d}.mp3"
+    image = SHORTS_DIR / f"short_{short_number:02d}.png"
+    srt = SHORTS_DIR / f"short_{short_number:02d}.srt"
+    output = SHORTS_DIR / f"short_{short_number:02d}.mp4"
 
-    font_paths = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    ]
-    bold = ImageFont.truetype(font_paths[0], 64)
-    normal = ImageFont.truetype(font_paths[1], 34)
-    small = ImageFont.truetype(font_paths[1], 25)
-
-    # Minimal branded layout; no copyrighted visual assets.
-    draw.rectangle((80, 80, 1840, 1000), outline=(70, 78, 92), width=3)
-    draw.text((120, 115), "uncommonAI", font=bold, fill=(235, 238, 245))
-    draw.text((120, 205), f"SCENE {scene_number}", font=small, fill=(145, 154, 170))
-    draw.text((120, 255), title[:80], font=bold, fill=(245, 245, 248))
-
-    wrapped = textwrap.wrap(safe_text(narration), width=72)
-    y = 390
-    for line in wrapped[:10]:
-        draw.text((125, y), line, font=normal, fill=(215, 219, 228))
-        y += 52
-
-    draw.text(
-        (125, 930),
-        "AI-assisted research • original commentary • uncommonAI",
-        font=small,
-        fill=(130, 138, 153),
+    run(
+        [
+            "edge-tts",
+            "--voice",
+            VOICE,
+            "--text",
+            narration,
+            "--write-media",
+            str(audio),
+        ]
     )
-    img.save(path, quality=95)
+
+    duration = audio_duration(audio)
+
+    make_card(title, short_number, narration, image)
+    make_srt(narration, duration, srt)
+
+    subtitle_path = str(srt).replace("\\", "/").replace(":", "\\:")
+
+    vf = (
+        f"subtitles='{subtitle_path}':"
+        "force_style='FontName=DejaVu Sans,FontSize=20,"
+        "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
+        "Outline=2,Shadow=1,Alignment=2,MarginV=90'"
+    )
+
+    run(
+        [
+            "ffmpeg",
+            "-y",
+            "-loop",
+            "1",
+            "-i",
+            str(image),
+            "-i",
+            str(audio),
+            "-vf",
+            vf,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-tune",
+            "stillimage",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-shortest",
+            "-t",
+            str(duration),
+            "-movflags",
+            "+faststart",
+            str(output),
+        ]
+    )
+
+    if not output.exists() or output.stat().st_size == 0:
+        raise SystemExit(f"Short {short_number} was not created correctly.")
+
+    print(f"SHORT CREATED: {output}")
+    print(f"SIZE BYTES: {output.stat().st_size}")
+
 
 def main():
     if not PACKAGE_FILE.exists():
         raise SystemExit(f"Missing {PACKAGE_FILE}")
 
-    package = json.loads(PACKAGE_FILE.read_text(encoding="utf-8"))
-    title = safe_text(package.get("chosen_title", "uncommonAI"))
-
-    scenes = package.get("scenes", [])
-    if len(scenes) != 8:
-        raise SystemExit(f"Expected 8 scenes, found {len(scenes)}")
-
-    # Edge TTS is used for a natural neural voice without requiring another API key.
     if not shutil.which("ffmpeg"):
         raise SystemExit("ffmpeg is not installed.")
+
+    if not shutil.which("ffprobe"):
+        raise SystemExit("ffprobe is not installed.")
+
     if not shutil.which("edge-tts"):
         raise SystemExit("edge-tts is not installed.")
 
-    segments = []
-
-    for i, scene in enumerate(scenes, 1):
-        narration = safe_text(scene.get("narration"))
-        if not narration:
-            raise SystemExit(f"Scene {i} has no narration.")
-
-        audio = VIDEO_DIR / f"scene_{i:02d}.mp3"
-        image = VIDEO_DIR / f"scene_{i:02d}.png"
-        srt = VIDEO_DIR / f"scene_{i:02d}.srt"
-        segment = VIDEO_DIR / f"segment_{i:02d}.mp4"
-
-        run([
-            "edge-tts",
-            "--voice", VOICE,
-            "--text", narration,
-            "--write-media", str(audio),
-        ])
-
-        # Obtain the generated audio duration.
-        probe = subprocess.check_output([
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            str(audio)
-        ], text=True).strip()
-        duration = float(probe)
-
-        make_card(title, i, narration, image)
-        make_srt(narration, duration, srt)
-
-        # Burn captions directly into the scene. The subtitles file is generated
-        # from the exact narration, so it remains synchronized with the voice.
-        subtitle_path = str(srt).replace("\\", "/").replace(":", "\\:")
-        vf = (
-            f"subtitles='{subtitle_path}':"
-            "force_style='FontName=DejaVu Sans,FontSize=22,"
-            "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
-            "Outline=2,Shadow=1,Alignment=2,MarginV=55'"
-        )
-
-        run([
-            "ffmpeg", "-y",
-            "-loop", "1",
-            "-i", str(image),
-            "-i", str(audio),
-            "-vf", vf,
-            "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-tune", "stillimage",
-            "-pix_fmt", "yuv420p",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-shortest",
-            "-t", str(duration),
-            str(segment),
-        ])
-
-        segments.append(segment)
-
-    concat_file = VIDEO_DIR / "segments.txt"
-    concat_file.write_text(
-        "\n".join(f"file '{p.resolve()}'" for p in segments),
-        encoding="utf-8",
+    package = json.loads(
+        PACKAGE_FILE.read_text(encoding="utf-8")
     )
 
-    run([
-        "ffmpeg", "-y",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", str(concat_file),
-        "-c", "copy",
-        "-movflags", "+faststart",
-        str(OUTPUT),
-    ])
+    title = safe_text(
+        package.get("chosen_title", "uncommonAI")
+    )
 
-    # Basic output validation.
-    subprocess.run([
-        "ffprobe", "-v", "error",
-        "-show_entries", "format=duration",
-        "-show_entries", "stream=codec_name",
-        "-of", "default=noprint_wrappers=1",
-        str(OUTPUT),
-    ], check=True)
+    scenes = package.get("scenes", [])
 
-    print(f"VIDEO CREATED: {OUTPUT}")
-    print(f"SIZE BYTES: {OUTPUT.stat().st_size}")
+    if len(scenes) < 3:
+        raise SystemExit(
+            f"Expected at least 3 scenes for Shorts, found {len(scenes)}"
+        )
+
+    # Always start with a clean Shorts directory so an old run cannot
+    # interfere with the current run.
+    for item in SHORTS_DIR.iterdir():
+        if item.is_file():
+            item.unlink()
+
+    # Use the first three production scenes as the three Shorts.
+    # This keeps the Shorts tied directly to the same approved topic.
+    for short_number, scene in enumerate(scenes[:3], 1):
+        narration = safe_text(scene.get("narration"))
+
+        if not narration:
+            raise SystemExit(
+                f"Scene {short_number} has no narration."
+            )
+
+        # Keep Shorts reasonably concise. The complete narration is retained
+        # unless it is exceptionally long.
+        words = narration.split()
+        if len(words) > 75:
+            narration = " ".join(words[:75]).rstrip(" ,.;:") + "."
+
+        render_short(short_number, title, narration)
+
+    print("===== SHORTS CREATED =====")
+    for number in range(1, 4):
+        path = SHORTS_DIR / f"short_{number:02d}.mp4"
+        print(f"{path} | {path.stat().st_size} bytes")
+
 
 if __name__ == "__main__":
     main()
