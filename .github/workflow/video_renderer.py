@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import hashlib
 import math
 import os
 import random
@@ -19,6 +20,11 @@ VIDEO_DIR.mkdir(parents=True, exist_ok=True)
 
 VOICE_PROVIDER = os.getenv("VOICE_PROVIDER", "auto").lower().strip()
 EDGE_VOICE = os.getenv("VIDEO_VOICE", "en-US-ChristopherNeural")
+VIDEO_FPS = int(os.getenv("VIDEO_FPS", "24"))
+VIDEO_PRESET = os.getenv("VIDEO_PRESET", "superfast")
+VIDEO_CRF = os.getenv("VIDEO_CRF", "23")
+RENDER_CACHE = os.getenv("RENDER_CACHE", "1").lower() not in {"0", "false", "no"}
+RENDER_VERSION = "V20"
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "").strip()
 ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2").strip()
@@ -949,74 +955,145 @@ def generate_voice(text, output_path):
     print(f"TTS: Edge TTS ({EDGE_VOICE}) -> {output_path}")
 
 
+
+def cache_key(*parts):
+    h = hashlib.sha256()
+    for part in parts:
+        if isinstance(part, bytes):
+            data = part
+        else:
+            data = str(part).encode("utf-8")
+        h.update(data)
+        h.update(b"\0")
+    return h.hexdigest()[:20]
+
+
+def cache_valid(path, key):
+    if not RENDER_CACHE or not path.exists() or path.stat().st_size == 0:
+        return False
+    marker = path.with_suffix(path.suffix + ".cache")
+    try:
+        return marker.read_text(encoding="utf-8").strip() == key
+    except Exception:
+        return False
+
+
+def write_cache_marker(path, key):
+    path.with_suffix(path.suffix + ".cache").write_text(key, encoding="utf-8")
+
+
 def render_scene(index, scene, title, p):
     audio=VIDEO_DIR/f"scene_{index:02d}.mp3"
     image=VIDEO_DIR/f"scene_{index:02d}.png"
     visual_layer=VIDEO_DIR/f"scene_{index:02d}_visual.png"
     ass=VIDEO_DIR/f"scene_{index:02d}.ass"
     out=VIDEO_DIR/f"segment_{index:02d}.mp4"
+
     narration=safe_text(scene.get("narration"))
-    if not narration: raise SystemExit(f"Scene {index} has no narration.")
-    scene_title=safe_text(scene.get("title") or scene.get("heading") or scene.get("key_phrase") or f"Scene {index}")
-    generate_voice(narration, audio)
-    duration=audio_duration(audio)
-    make_card(scene,index,scene_title,p,image,visual_layer)
-    make_ass(narration,duration,ass)
-    ass_path=str(ass).replace("\\","/").replace(":","\\:").replace("'","\\'")
-    # Premium motion system:
-    # - slow exponential camera drift
-    # - subtle breathing scale
-    # - visual layer floats independently
-    # - no hard slide-in / grid snapping
-    base = (
-        "scale=1970:1108,"
-        "zoompan=z='1.0+0.012*(1-exp(-on/55))':"
-        "x='iw/2-(iw/zoom/2)+10*sin(on/95)':"
-        "y='ih/2-(ih/zoom/2)+7*cos(on/117)':"
-        "d=1:s=1920x1080:fps=30"
-        "[base]"
+    if not narration:
+        raise SystemExit(f"Scene {index} has no narration.")
+    scene_title=safe_text(
+        scene.get("title")
+        or scene.get("heading")
+        or scene.get("key_phrase")
+        or f"Scene {index}"
     )
+
+    # Cache keys prevent expensive Edge TTS and PIL regeneration on reruns.
+    voice_key = cache_key(
+        RENDER_VERSION, "voice", VOICE_PROVIDER, EDGE_VOICE,
+        ELEVENLABS_VOICE_ID, ELEVENLABS_MODEL, narration
+    )
+    visual_key = cache_key(
+        RENDER_VERSION, "visual", index, scene_title,
+        json.dumps(scene, sort_keys=True, ensure_ascii=False),
+        json.dumps(p, sort_keys=True),
+    )
+    duration_key = None
+
+    if not cache_valid(audio, voice_key):
+        generate_voice(narration, audio)
+        write_cache_marker(audio, voice_key)
+    else:
+        print(f"CACHE: narration scene {index} -> {audio}")
+
+    duration=audio_duration(audio)
+    duration_key = cache_key(RENDER_VERSION, "ass", narration, round(duration, 3))
+
+    if not cache_valid(image, visual_key):
+        make_card(scene,index,scene_title,p,image,visual_layer)
+        write_cache_marker(image, visual_key)
+        write_cache_marker(visual_layer, visual_key)
+    else:
+        print(f"CACHE: visuals scene {index}")
+
+    if not cache_valid(ass, duration_key):
+        make_ass(narration,duration,ass)
+        write_cache_marker(ass, duration_key)
+    else:
+        print(f"CACHE: subtitles scene {index}")
+
+    ass_path=str(ass).replace("\\","/").replace(":","\\:").replace("'","\\'")
+
+    # V20 performance optimization:
+    # - 24 fps is cinematic and cuts ~20% of encoded frames vs 30 fps.
+    # - No zoompan: it was one of the most expensive filters in V19.
+    # - Cheap crop-based micro-drift preserves motion without frame synthesis.
+    # - superfast x264 keeps GitHub Actions runtime reasonable.
+    # - subtitles remain burned in, so no change to the output design.
     vf = (
-        f"[0:v]{base};"
-        "[2:v]format=rgba,setpts=PTS-STARTPTS,"
-        "scale=1970:1108,"
-        "zoompan=z='1.0+0.018*(1-exp(-on/32))':"
-        "x='iw/2-(iw/zoom/2)+8*sin(on/83)':"
-        "y='ih/2-(ih/zoom/2)+6*cos(on/97)':"
-        "d=1:s=1970x1108:fps=30,"
-        "fade=t=in:st=0:d=0.75:alpha=1[vl];"
-        "[base][vl]"
-        "overlay=x='2*sin(t/8)':"
-        "y='2*cos(t/9)':"
-        "format=auto[composite];"
-        "[composite]"
-        "drawbox="
-        "x='82':y='250':w='1756':h='2':"
-        "color=white@0.12:t=fill,"
-        "fade=t=in:st=0:d=0.35,"
+        f"[0:v]"
+        f"scale=1960:1102:flags=fast_bilinear,"
+        f"crop=1920:1080:"
+        f"x='20+8*sin(t/9)':"
+        f"y='11+5*cos(t/11)',"
+        f"fps={VIDEO_FPS}[base];"
+        f"[2:v]format=rgba,"
+        f"scale=1960:1102:flags=fast_bilinear,"
+        f"crop=1920:1080:"
+        f"x='20+10*sin(t/10)':"
+        f"y='11+6*cos(t/12)',"
+        f"fps={VIDEO_FPS},"
+        f"fade=t=in:st=0:d=0.5:alpha=1[vl];"
+        f"[base][vl]"
+        f"overlay=x='2*sin(t/8)':y='2*cos(t/9)':shortest=1,"
+        f"drawbox=x='82':y='250':w='1756':h='2':"
+        f"color=white@0.12:t=fill,"
         f"subtitles='{ass_path}'[vout]"
     )
-    run([
-        "ffmpeg","-y",
-        "-loop","1","-i",str(image),
-        "-i",str(audio),
-        "-loop","1","-i",str(visual_layer),
-        "-filter_complex",vf,
-        "-map","[vout]",
-        "-map","1:a",
-        "-c:v","libx264",
-        "-preset","veryfast",
-        "-tune","stillimage",
-        "-pix_fmt","yuv420p",
-        "-c:a","aac",
-        "-b:a","192k",
-        "-shortest",
-        "-t",str(duration),
-        "-movflags","+faststart",
-        str(out)
-    ])
-    if not out.exists() or out.stat().st_size==0: raise SystemExit(f"Scene {index} was not created correctly.")
+
+    segment_key = cache_key(
+        RENDER_VERSION, "segment", index, narration, scene_title,
+        visual_key, duration, VIDEO_FPS, VIDEO_PRESET, VIDEO_CRF
+    )
+    if cache_valid(out, segment_key):
+        print(f"CACHE: encoded segment {index} -> {out}")
+    else:
+        run([
+            "ffmpeg","-y",
+            "-loop","1","-framerate",str(VIDEO_FPS),"-i",str(image),
+            "-i",str(audio),
+            "-loop","1","-framerate",str(VIDEO_FPS),"-i",str(visual_layer),
+            "-filter_complex",vf,
+            "-map","[vout]","-map","1:a",
+            "-c:v","libx264",
+            "-preset",VIDEO_PRESET,
+            "-crf",VIDEO_CRF,
+            "-tune","stillimage",
+            "-pix_fmt","yuv420p",
+            "-r",str(VIDEO_FPS),
+            "-c:a","aac","-b:a","160k",
+            "-shortest","-t",str(duration),
+            "-movflags","+faststart",
+            str(out)
+        ])
+        if out.exists() and out.stat().st_size > 0:
+            write_cache_marker(out, segment_key)
+
+    if not out.exists() or out.stat().st_size==0:
+        raise SystemExit(f"Scene {index} was not created correctly.")
     return out
+
 
 
 def main():
@@ -1051,7 +1128,7 @@ def main():
     run(["ffmpeg","-y","-f","concat","-safe","0","-i",str(concat),"-c","copy","-movflags","+faststart",str(OUTPUT)])
     if not OUTPUT.exists() or OUTPUT.stat().st_size==0: raise SystemExit("Final MP4 was not created correctly.")
     subprocess.run(["ffprobe","-v","error","-show_entries","format=duration,size","-show_entries","stream=codec_name,width,height","-of","default=noprint_wrappers=1",str(OUTPUT)],check=True)
-    print(f"V19 PREMIUM VIDEO CREATED: {OUTPUT} | {OUTPUT.stat().st_size} bytes")
+    print(f"V20 FAST PREMIUM VIDEO CREATED: {OUTPUT} | {OUTPUT.stat().st_size} bytes")
 
 if __name__ == "__main__":
     main()
