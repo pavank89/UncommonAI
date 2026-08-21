@@ -125,33 +125,155 @@ def center_text(draw, text, box, font, fill):
 
 
 def visual_keywords(scene, limit=4):
-    """Extract concise labels from supplied scene data; never invent facts."""
+    """
+    Extract useful visual labels from the producer package.
+
+    Priority:
+      1. explicit visual_labels/key_points/entities/visual_text
+      2. key_phrase/title/heading
+      3. visual_prompt
+      4. narration
+
+    The previous renderer ignored visual_prompt, which caused many scenes to
+    fall back to generic CHECK/RESULT labels even when Gemini had supplied
+    scene-specific visual instructions.
+    """
     candidates = []
-    for key in ("visual_labels", "key_points", "entities", "visual_text", "key_phrase", "heading", "title"):
+
+    for key in (
+        "visual_labels",
+        "key_points",
+        "entities",
+        "visual_text",
+        "key_phrase",
+        "heading",
+        "title",
+    ):
         value = scene.get(key)
         if isinstance(value, list):
             candidates.extend(value)
         elif value:
             candidates.append(value)
 
-    if not candidates:
-        candidates = re.split(r"(?<=[.!?])\s+", safe_text(scene.get("narration")))
+    # visual_prompt is deliberately considered after explicit labels so prose
+    # prompts do not overwhelm concise labels, but before narration.
+    for key in ("visual_prompt", "narration"):
+        value = scene.get(key)
+        if value:
+            candidates.append(value)
+
+    stop = {
+        "the", "a", "an", "and", "or", "but", "for", "to", "of", "in", "on",
+        "with", "from", "into", "that", "this", "these", "those", "is", "are",
+        "was", "were", "be", "by", "as", "at", "it", "its", "their", "than",
+        "then", "when", "where", "how", "why", "what", "which", "can", "could",
+        "will", "would", "should", "not", "more", "less", "very", "just",
+        "show", "shows", "showing", "visual", "diagram", "illustrate",
+        "illustrates", "illustrating", "scene", "image", "use", "using",
+    }
 
     labels = []
+
+    def add_label(value):
+        value = safe_text(value)
+        value = re.sub(
+            r"^(fact|point|step|result|example|label|node|box|input|output)\s*[:\-]\s*",
+            "",
+            value,
+            flags=re.I,
+        )
+        value = re.sub(r"^[•*\-\d.)\s]+", "", value)
+        value = value.strip(" ,.;:!?()[]{}\"'")
+
+        if not value:
+            return
+
+        words = value.split()
+        if len(words) > 6:
+            value = " ".join(words[:6])
+
+        if len(words) == 1 and value.lower() in stop:
+            return
+
+        normalized = re.sub(r"[^a-z0-9]+", "", value.lower())
+        if not normalized:
+            return
+
+        existing = {
+            re.sub(r"[^a-z0-9]+", "", x.lower())
+            for x in labels
+        }
+        if normalized in existing:
+            return
+
+        # Reject renderer filler labels.
+        if value.upper() in {
+            "CHECK", "RESULT", "SYSTEM", "OUTPUT", "INPUT",
+            "TRADE-OFF", "DECISION", "LOW", "HIGH", "RISK", "VALUE",
+        }:
+            return
+
+        if 1 <= len(value.split()) <= 6 and len(value) <= 42:
+            labels.append(value)
+
     for item in candidates:
-        item = safe_text(item)
-        item = re.sub(r"^(fact|point|step|result|example)\s*[:\-]\s*", "", item, flags=re.I)
-        if not item or item.upper() in {x.upper() for x in labels}:
-            continue
-        if len(item.split()) > 8:
-            item = " ".join(item.split()[:8])
-        if 1 <= len(item.split()) <= 8:
-            labels.append(item[:46])
+        if isinstance(item, str):
+            # Explicit short labels should stay intact.
+            if len(item.split()) <= 6:
+                add_label(item)
+                continue
+
+            # For prose, extract meaningful noun-like phrases from common
+            # separators used by Gemini visual prompts.
+            pieces = re.split(
+                r"[|;•\n]|(?:\s+→\s+)|(?:\s+->\s+)|(?:\s+vs\.?\s+)|"
+                r"(?:\s+versus\s+)",
+                item,
+                flags=re.I,
+            )
+
+            for piece in pieces:
+                piece = re.sub(
+                    r"^(show|display|illustrate|illustrating|depict|depicts|"
+                    r"create|draw|animate|use)\s+",
+                    "",
+                    piece.strip(),
+                    flags=re.I,
+                )
+                add_label(piece)
+
+            # If the prompt is still prose, capture compact title-case or
+            # uppercase concepts rather than the first arbitrary words.
+            phrases = re.findall(
+                r"\b(?:[A-Z][A-Za-z0-9/&+-]*(?:\s+[A-Z][A-Za-z0-9/&+-]*){0,4})\b",
+                item,
+            )
+            for phrase in phrases:
+                add_label(phrase)
+
         if len(labels) >= limit:
             break
 
-    return labels or ["INPUT", "SYSTEM", "CHECK", "RESULT"]
+    # Final fallback: derive compact concepts from the scene title/narration.
+    if len(labels) < limit:
+        text = safe_text(
+            scene.get("title")
+            or scene.get("heading")
+            or scene.get("key_phrase")
+            or scene.get("narration")
+        )
+        words = [
+            re.sub(r"[^A-Za-z0-9/&+-]", "", w)
+            for w in text.split()
+        ]
+        words = [w for w in words if len(w) >= 4 and w.lower() not in stop]
 
+        for word in words:
+            add_label(word)
+            if len(labels) >= limit:
+                break
+
+    return labels[:limit] or ["KEY IDEA", "MECHANISM", "IMPLICATION", "TAKEAWAY"]
 
 def visual_kind(scene, index, previous=None):
     """Choose a visual treatment from scene meaning, while preventing adjacent repeats."""
@@ -215,7 +337,7 @@ def draw_visual(draw, kind, area, p, scene=None):
 
     # Use the scene's own words rather than generic filler whenever possible.
     if kind == "flow":
-        steps = (labels + ["CHECK", "RESULT"])[:4]
+        steps = (labels + ["IMPLICATION", "RESULT"])[:4]
         bw = (w - 75) / 4
         by = y + 125
         for i, text in enumerate(steps):
@@ -242,7 +364,7 @@ def draw_visual(draw, kind, area, p, scene=None):
                 draw.line((bx+bw+4, by+150, bx+bw+gap-8, by+150), fill=p["muted"], width=4)
 
     elif kind == "architecture":
-        nodes = (labels + ["SYSTEM", "OUTPUT"])[:4]
+        nodes = (labels + ["SYSTEM", "OUTCOME"])[:4]
         bw = 330
         gap = 55
         total = 4*bw + 3*gap
@@ -325,7 +447,7 @@ def draw_visual(draw, kind, area, p, scene=None):
         center_text(draw,"CHOOSE BASED ON CONTEXT",(x+200,y+h-75,x+w-200,y+h-25),body_font,p["accent2"])
 
     elif kind == "steps":
-        steps = (labels + ["CHECK", "RESULT"])[:4]
+        steps = (labels + ["IMPLICATION", "OUTCOME"])[:4]
         bw=(w-60)/2; gapx,gapy=60,45; by=y+35
         for i,text in enumerate(steps):
             row,col=divmod(i,2); bx=x+col*(bw+gapx); yy=by+row*(155+gapy)
@@ -422,10 +544,15 @@ def render_scene(index, scene, title, p):
     vf=(
         f"[0:v]{base};"
         "[2:v]format=rgba,setpts=PTS-STARTPTS,"
-        "fade=t=in:st=0:d=0.55:alpha=1,"
-        "scale=1970:1108[vl];"
+        "scale=1970:1108,"
+        "zoompan=z='1.0+0.025*min(on/(30*0.8),1)':"
+        "x='iw/2-(iw/zoom/2)':"
+        "y='ih/2-(ih/zoom/2)':"
+        "d=1:s=1970x1108:fps=30,"
+        "fade=t=in:st=0:d=0.55:alpha=1[vl];"
         "[base][vl]"
-        "overlay=x=0:y='if(lt(t,0.55),28*(1-t/0.55),0)':"
+        "overlay=x=0:"
+        "y='if(lt(t,0.55),28*(1-t/0.55),0)':"
         "format=auto[composite];"
         "[composite]"
         "drawbox="
