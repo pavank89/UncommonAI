@@ -10,6 +10,10 @@ WORK.mkdir(parents=True, exist_ok=True)
 
 MODE = os.getenv("UNCOMMONAI_MODE", "research").lower()
 APPROVED_TOPIC = os.getenv("APPROVED_TOPIC", "").strip()
+
+def safe_text(value):
+    """Normalize text safely for validation and display."""
+    return re.sub(r"\\s+", " ", str(value or "")).strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 
 FEEDS = {
