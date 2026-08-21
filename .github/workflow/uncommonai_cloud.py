@@ -2,9 +2,13 @@ import os, json, re, urllib.request
 from pathlib import Path
 import feedparser
 
-ROOT = Path(__file__).resolve().parent
+# Always write generated artifacts to the repository root/workspace.
+# GitHub Actions runs this script from the repository root, while __file__
+# points into .github/workflow/. Using __file__.parent here incorrectly
+# creates .github/workflow/workspace/, which downstream steps cannot find.
+ROOT = Path.cwd()
 WORK = ROOT / "workspace"
-WORK.mkdir(exist_ok=True)
+WORK.mkdir(parents=True, exist_ok=True)
 
 MODE = os.getenv("UNCOMMONAI_MODE", "research").lower()
 APPROVED_TOPIC = os.getenv("APPROVED_TOPIC", "").strip()
