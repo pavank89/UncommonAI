@@ -348,7 +348,7 @@ def draw_visual(draw, kind, area, p, scene=None):
                 rect(draw,(bx,by,bx+size,by+size),p["panel"],p["accent"],3)
                 center_text(draw,labels2[r*2+c].upper()[:14],(bx+10,by+35,bx+size-10,by+125),label_font,p["text"])
 
-def make_card(scene, index, title, p, path):
+def make_card(scene, index, title, p, path, visual_path=None):
     from PIL import Image, ImageDraw, ImageFont
     W,H = 1920,1080
     img = Image.new("RGB", (W,H), p["bg"])
@@ -370,9 +370,18 @@ def make_card(scene, index, title, p, path):
         yy += bb[3]-bb[1]+8
 
     # Large visual zone; no text is allowed in subtitle zone below 900.
+    # V14 moves the visual layer into a separate transparent image so it can
+    # animate independently from the editorial card.
     rect(draw,(90,340,W-90,870),p["panel"],p["accent"],2,30)
-    kind=scene.get("_renderer_visual_kind") or visual_kind(scene,index)
-    draw_visual(draw,kind,(145,385,W-290,450),p,scene)
+
+    if visual_path:
+        from PIL import Image
+        layer=Image.new("RGBA",(W,H),(0,0,0,0))
+        ld=ImageDraw.Draw(layer)
+        rect(ld,(90,340,W-90,870),p["panel"],p["accent"],2,30)
+        kind=scene.get("_renderer_visual_kind") or visual_kind(scene,index)
+        draw_visual(ld,kind,(145,385,W-290,450),p,scene)
+        layer.save(visual_path)
 
     # Tiny branded footer only above the subtitle-safe zone.
     draw.line((90,900,W-90,900),fill=p["accent"],width=2)
@@ -384,6 +393,7 @@ def make_card(scene, index, title, p, path):
 def render_scene(index, scene, title, p):
     audio=VIDEO_DIR/f"scene_{index:02d}.mp3"
     image=VIDEO_DIR/f"scene_{index:02d}.png"
+    visual_layer=VIDEO_DIR/f"scene_{index:02d}_visual.png"
     ass=VIDEO_DIR/f"scene_{index:02d}.ass"
     out=VIDEO_DIR/f"segment_{index:02d}.mp4"
     narration=safe_text(scene.get("narration"))
@@ -391,14 +401,25 @@ def render_scene(index, scene, title, p):
     scene_title=safe_text(scene.get("title") or scene.get("heading") or scene.get("key_phrase") or f"Scene {index}")
     run(["edge-tts","--voice",VOICE,"--text",narration,"--write-media",str(audio)])
     duration=audio_duration(audio)
-    make_card(scene,index,scene_title,p,image)
+    make_card(scene,index,scene_title,p,image,visual_layer)
     make_ass(narration,duration,ass)
     ass_path=str(ass).replace("\\","/").replace(":","\\:").replace("'","\\'")
-    # Motion is applied to the card first; ASS subtitles are applied last.
-    vf=("scale=1970:1108," 
-        "zoompan=z='min(zoom+0.00012,1.02)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1920x1080:fps=30," 
-        f"subtitles='{ass_path}'")
-    run(["ffmpeg","-y","-loop","1","-i",str(image),"-i",str(audio),"-vf",vf,"-c:v","libx264","-preset","veryfast","-tune","stillimage","-pix_fmt","yuv420p","-c:a","aac","-b:a","192k","-shortest","-t",str(duration),"-movflags","+faststart",str(out)])
+    # V14 animation: gentle camera drift + visual-layer reveal + accent sweep.
+    # Subtitles are applied last so motion never disturbs the subtitle-safe zone.
+    base=("scale=1970:1108,"
+          "zoompan=z='1.0+0.018*min(on/(30*2.5),1)':"
+          "x='iw/2-(iw/zoom/2)+6*sin(on/55)':"
+          "y='ih/2-(ih/zoom/2)+4*cos(on/63)':d=1:s=1920x1080:fps=30")
+    vf=(base+","
+        f"movie='{str(visual_layer).replace(chr(92),'/').replace(':','\\:')}'[v];"
+        "[v]format=rgba,fade=t=in:st=0:d=0.55:alpha=1,"
+        "scale=1970:1108[vl];"
+        "[0:v][vl]overlay=x=0:y='if(lt(t,0.55),28*(1-t/0.55),0)':format=auto,"
+        "drawbox=x='if(lt(t,0.9),80+(iw-240)*t/0.9,iw-160)':y=126:w=120:h=4:"
+        "color=white@0.45:t=fill,"
+        "fade=t=in:st=0:d=0.25,"
+        f"subtitles='{ass_path}'[vout]")
+    run(["ffmpeg","-y","-loop","1","-i",str(image),"-i",str(audio),"-filter_complex",vf,"-map","[vout]","-map","1:a","-c:v","libx264","-preset","veryfast","-tune","stillimage","-pix_fmt","yuv420p","-c:a","aac","-b:a","192k","-shortest","-t",str(duration),"-movflags","+faststart",str(out)])
     if not out.exists() or out.stat().st_size==0: raise SystemExit(f"Scene {index} was not created correctly.")
     return out
 
@@ -426,7 +447,7 @@ def main():
     run(["ffmpeg","-y","-f","concat","-safe","0","-i",str(concat),"-c","copy","-movflags","+faststart",str(OUTPUT)])
     if not OUTPUT.exists() or OUTPUT.stat().st_size==0: raise SystemExit("Final MP4 was not created correctly.")
     subprocess.run(["ffprobe","-v","error","-show_entries","format=duration,size","-show_entries","stream=codec_name,width,height","-of","default=noprint_wrappers=1",str(OUTPUT)],check=True)
-    print(f"V12 VIDEO CREATED: {OUTPUT} | {OUTPUT.stat().st_size} bytes")
+    print(f"V14 VIDEO CREATED: {OUTPUT} | {OUTPUT.stat().st_size} bytes")
 
 if __name__ == "__main__":
     main()
