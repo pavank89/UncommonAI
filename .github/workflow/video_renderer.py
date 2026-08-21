@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import math
 import os
 import random
 import re
@@ -19,14 +20,14 @@ FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
 PALETTE = [
-    {"accent": (255,184,77), "accent2": (255,214,128), "bg": (18,17,24), "panel": (37,33,45), "text": (247,247,250), "muted": (173,176,189)},
-    {"accent": (62,220,151), "accent2": (145,245,196), "bg": (13,20,19), "panel": (29,43,39), "text": (244,249,246), "muted": (169,187,180)},
-    {"accent": (174,105,255), "accent2": (215,170,255), "bg": (20,16,27), "panel": (39,30,51), "text": (248,245,251), "muted": (185,175,197)},
-    {"accent": (255,108,88), "accent2": (255,166,150), "bg": (24,17,18), "panel": (45,30,33), "text": (250,246,246), "muted": (190,173,176)},
-    {"accent": (65,190,255), "accent2": (145,225,255), "bg": (14,19,25), "panel": (27,39,50), "text": (244,248,250), "muted": (169,184,196)},
-    {"accent": (255,88,180), "accent2": (255,160,216), "bg": (25,15,23), "panel": (44,27,42), "text": (250,245,249), "muted": (190,171,185)},
-    {"accent": (86,151,255), "accent2": (160,195,255), "bg": (15,18,26), "panel": (24,29,43), "text": (244,247,251), "muted": (170,180,198)},
-    {"accent": (190,255,73), "accent2": (220,255,150), "bg": (19,22,14), "panel": (30,35,22), "text": (246,249,240), "muted": (180,189,162)},
+    {"accent": (64, 224, 255), "accent2": (160, 245, 255), "bg": (7, 10, 16), "panel": (18, 23, 31), "text": (244, 248, 252), "muted": (143, 154, 169)},
+    {"accent": (255, 70, 196), "accent2": (255, 165, 230), "bg": (9, 7, 14), "panel": (20, 18, 28), "text": (248, 245, 251), "muted": (151, 143, 164)},
+    {"accent": (177, 108, 255), "accent2": (220, 181, 255), "bg": (10, 7, 16), "panel": (21, 18, 30), "text": (247, 245, 251), "muted": (151, 143, 165)},
+    {"accent": (255, 184, 72), "accent2": (255, 220, 145), "bg": (13, 10, 7), "panel": (24, 21, 16), "text": (249, 247, 242), "muted": (160, 151, 133)},
+    {"accent": (80, 238, 168), "accent2": (166, 250, 210), "bg": (7, 12, 10), "panel": (17, 25, 22), "text": (244, 249, 246), "muted": (142, 161, 153)},
+    {"accent": (91, 139, 255), "accent2": (171, 197, 255), "bg": (7, 9, 15), "panel": (17, 21, 31), "text": (244, 247, 252), "muted": (143, 152, 170)},
+    {"accent": (255, 101, 101), "accent2": (255, 174, 174), "bg": (13, 8, 9), "panel": (25, 17, 18), "text": (250, 245, 245), "muted": (164, 145, 147)},
+    {"accent": (204, 255, 72), "accent2": (226, 255, 154), "bg": (9, 12, 6), "panel": (20, 25, 14), "text": (246, 249, 240), "muted": (153, 164, 134)},
 ]
 
 
@@ -325,264 +326,473 @@ def draw_header(draw, text, area, p, font):
     draw.text((x, y), safe_text(text).upper()[:44], font=font, fill=p["accent"])
 
 
-def draw_visual(draw, kind, area, p, scene=None):
-    from PIL import ImageFont
+
+def _accent_hex(rgb):
+    return "#{:02X}{:02X}{:02X}".format(*rgb)
+
+
+def _mix(a, b, t):
+    return tuple(int(a[i] * (1-t) + b[i] * t) for i in range(3))
+
+
+def _organic_points(x, y, w, h, count, seed):
+    """
+    Organic, content-aware anchors. They are deterministic per scene so
+    reruns remain stable, but are deliberately irregular rather than grid-snapped.
+    """
+    rng = random.Random(seed)
+    cx, cy = x + w * 0.52, y + h * 0.50
+    rx, ry = w * 0.31, h * 0.29
+    pts = []
+    for i in range(count):
+        angle = (i / max(count, 1)) * math.tau + rng.uniform(-0.38, 0.38)
+        radius = rng.uniform(0.72, 1.05)
+        px = cx + math.cos(angle) * rx * radius
+        py = cy + math.sin(angle) * ry * radius
+        pts.append((int(px), int(py)))
+    return pts
+
+
+def _rounded_glass(draw, box, fill, outline, radius=22, width=2):
+    draw.rounded_rectangle(
+        box,
+        radius=radius,
+        fill=fill,
+        outline=outline,
+        width=width,
+    )
+
+
+def _draw_glow_line(layer, points, color, width=5, glow=18):
+    from PIL import Image, ImageDraw, ImageFilter
+    glow_layer = Image.new("RGBA", layer.size, (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow_layer)
+    gd.line(points, fill=(*color, 75), width=glow, joint="curve")
+    glow_layer = glow_layer.filter(ImageFilter.GaussianBlur(glow / 2))
+    layer.alpha_composite(glow_layer)
+    ImageDraw.Draw(layer).line(points, fill=(*color, 210), width=width, joint="curve")
+
+
+def _draw_background_atmosphere(layer, area, p, seed):
+    from PIL import Image, ImageDraw, ImageFilter
+    rng = random.Random(seed)
     x, y, w, h = area
+
+    # Soft architectural particles live behind the focal composition.
+    bg = Image.new("RGBA", layer.size, (0, 0, 0, 0))
+    bd = ImageDraw.Draw(bg)
+    for _ in range(24):
+        px = rng.randint(x, x + w)
+        py = rng.randint(y, y + h)
+        r = rng.choice([2, 3, 4, 6])
+        bd.ellipse((px-r, py-r, px+r, py+r), fill=(*p["accent"], rng.randint(20, 65)))
+
+    # Faint grid arcs: atmospheric, not a hard UI grid.
+    for radius in (180, 320, 480):
+        bd.arc(
+            (x+w/2-radius, y+h/2-radius, x+w/2+radius, y+h/2+radius),
+            rng.randint(0, 60),
+            rng.randint(190, 320),
+            fill=(*p["accent2"], 24),
+            width=2,
+        )
+
+    bg = bg.filter(ImageFilter.GaussianBlur(3.5))
+    layer.alpha_composite(bg)
+
+
+def _draw_callout(layer, center, label, p, seed, scale=1.0, active=True):
+    from PIL import Image, ImageDraw, ImageFont, ImageFilter
+    cx, cy = center
+    label = safe_text(label)[:34]
+    if not label:
+        return
+
+    # Adaptive width prevents hard-coded boxes from dominating short labels.
+    font = ImageFont.truetype(BOLD, max(22, int(26 * scale)))
+    tmp = Image.new("RGBA", layer.size, (0, 0, 0, 0))
+    td = ImageDraw.Draw(tmp)
+    bb = td.textbbox((0, 0), label.upper(), font=font)
+    tw, th = bb[2]-bb[0], bb[3]-bb[1]
+    bw = min(max(tw + 62, 190), 430)
+    bh = max(78, th + 42)
+
+    box = (int(cx-bw/2), int(cy-bh/2), int(cx+bw/2), int(cy+bh/2))
+
+    # Shadow/depth layer.
+    shadow = Image.new("RGBA", layer.size, (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shadow)
+    sd.rounded_rectangle(
+        (box[0]+8, box[1]+12, box[2]+8, box[3]+12),
+        radius=20,
+        fill=(0, 0, 0, 120),
+    )
+    shadow = shadow.filter(ImageFilter.GaussianBlur(11))
+    layer.alpha_composite(shadow)
+
+    # Frosted glass panel.
+    panel = Image.new("RGBA", layer.size, (0, 0, 0, 0))
+    pd = ImageDraw.Draw(panel)
+    fill = (18, 21, 29, 178)
+    outline = (*p["accent"], 205 if active else 105)
+    pd.rounded_rectangle(box, radius=20, fill=fill, outline=outline, width=2)
+
+    # Tiny status indicator, deliberately subtle.
+    dot_r = 5
+    pd.ellipse(
+        (box[0]+18, box[1]+18, box[0]+18+dot_r*2, box[1]+18+dot_r*2),
+        fill=(*p["accent"], 235 if active else 90),
+    )
+    pd.text(
+        (box[0]+34, box[1]+12),
+        "LIVE",
+        font=ImageFont.truetype(FONT, 14),
+        fill=(*p["muted"], 180),
+    )
+
+    # Tracking is simulated with small character spacing on the label.
+    text = label.upper()
+    spacing = 0.8
+    tx = box[0] + (bw-tw)/2
+    ty = box[1] + (bh-th)/2 + 8
+    pd.text((tx, ty), text, font=font, fill=(*p["text"], 245))
+
+    layer.alpha_composite(panel)
+
+
+def draw_visual(layer, kind, area, p, scene=None, seed=0):
+    """
+    Premium documentary visual system.
+
+    Design language:
+      - monochrome atmospheric base
+      - one neon accent
+      - organic anchors instead of card grids
+      - blurred depth layer behind crisp foreground labels
+      - one active path that explains the relationship
+      - frosted-glass callouts rather than presentation-card boxes
+    """
+    from PIL import Image, ImageDraw, ImageFont, ImageFilter
     scene = scene or {}
+    x, y, w, h = area
     labels = visual_keywords(scene, 4)
-    title_font = ImageFont.truetype(BOLD, 28)
-    label_font = ImageFont.truetype(BOLD, 24)
-    body_font = ImageFont.truetype(FONT, 21)
-    big_font = ImageFont.truetype(BOLD, 58)
+    labels = [safe_text(v) for v in labels if safe_text(v)]
 
-    # Use the scene's own words rather than generic filler whenever possible.
-    if kind == "flow":
-        steps = (labels + ["IMPLICATION", "RESULT"])[:4]
-        bw = (w - 75) / 4
-        by = y + 125
-        for i, text in enumerate(steps):
-            bx = x + i * (bw + 25)
-            rect(draw, (bx, by, bx + bw, by + 220), p["panel"], p["accent"], 3, 24)
-            center_text(draw, f"{i+1:02d}", (bx, by+18, bx+bw, by+70), label_font, p["accent"])
-            center_text(draw, text.upper()[:25], (bx+18, by+75, bx+bw-18, by+180), label_font, p["text"])
-            if i < 3:
-                draw.line((bx+bw+5, by+110, bx+bw+18, by+110), fill=p["accent2"], width=5)
-                draw.polygon([(bx+bw+18,by+110),(bx+bw+4,by+100),(bx+bw+4,by+120)], fill=p["accent2"])
+    # If explicit labels exist, prefer them over renderer filler.
+    if not labels:
+        labels = ["KEY IDEA", "MECHANISM", "IMPLICATION"]
 
+    _draw_background_atmosphere(layer, area, p, seed)
+
+    # Dark focal vignette gives physical depth.
+    vignette = Image.new("RGBA", layer.size, (0, 0, 0, 0))
+    vd = ImageDraw.Draw(vignette)
+    for r, a in ((520, 8), (420, 12), (320, 18)):
+        vd.ellipse(
+            (x+w/2-r, y+h/2-r, x+w/2+r, y+h/2+r),
+            fill=(0, 0, 0, a),
+        )
+    vignette = vignette.filter(ImageFilter.GaussianBlur(30))
+    layer.alpha_composite(vignette)
+
+    count = min(max(len(labels), 3), 4)
+    pts = _organic_points(x, y, w, h, count, seed + 97)
+
+    # Conceptual path changes by visual type, but never becomes a rigid grid.
+    if kind in ("flow", "timeline", "journey", "steps"):
+        ordered = pts
     elif kind == "compare":
-        pairs = labels[:3] if len(labels) >= 3 else ["BEFORE", "AI", "AFTER"]
-        bw, gap = 420, 35
-        total = 3*bw + 2*gap
-        start = x + (w-total)/2
-        by = y + 105
-        for i, text in enumerate(pairs):
-            bx = start + i*(bw+gap)
-            rect(draw, (bx, by, bx+bw, by+300), p["panel"], p["accent"], 3, 26)
-            center_text(draw, ["A", "B", "C"][i], (bx, by+22, bx+bw, by+78), big_font, p["accent"])
-            center_text(draw, text.upper()[:24], (bx+25, by+105, bx+bw-25, by+215), label_font, p["text"])
-            if i < 2:
-                draw.line((bx+bw+4, by+150, bx+bw+gap-8, by+150), fill=p["muted"], width=4)
-
-    elif kind == "architecture":
-        nodes = (labels + ["SYSTEM", "OUTCOME"])[:4]
-        bw = 330
-        gap = 55
-        total = 4*bw + 3*gap
-        start = x + (w-total)/2
-        cy = y + 235
-        for i, text in enumerate(nodes):
-            bx = start + i*(bw+gap)
-            rect(draw, (bx, cy-100, bx+bw, cy+100), p["panel"], p["accent"], 3, 25)
-            center_text(draw, f"{i+1}", (bx, cy-80, bx+bw, cy-25), label_font, p["accent"])
-            center_text(draw, text.upper()[:22], (bx+15, cy-5, bx+bw-15, cy+70), label_font, p["text"])
-            if i < 3:
-                draw.line((bx+bw+6, cy, bx+bw+gap-10, cy), fill=p["accent2"], width=5)
-                draw.polygon([(bx+bw+gap-10,cy),(bx+bw+gap-28,cy-11),(bx+bw+gap-28,cy+11)], fill=p["accent2"])
-
+        ordered = [
+            (x+w*0.29, y+h*0.47),
+            (x+w*0.71, y+h*0.53),
+        ]
+        while len(ordered) < count:
+            ordered.append(pts[len(ordered) % len(pts)])
     elif kind == "risk":
-        cx, cy = x+w/2, y+h/2
-        draw.polygon([(cx,cy-175),(cx-170,cy+125),(cx+170,cy+125)], fill=p["panel"], outline=p["accent"])
-        center_text(draw, "!", (cx-80,cy-115,cx+80,cy+50), ImageFont.truetype(BOLD,125), p["accent"])
-        risk_label = labels[0] if labels else "RISK"
-        center_text(draw, risk_label.upper()[:25], (x+150,cy+40,x+w-150,cy+105), label_font, p["text"])
-        center_text(draw, "HUMAN REVIEW", (x+180,y+h-75,x+w-180,y+h-20), body_font, p["accent2"])
+        ordered = [
+            (x+w*0.50, y+h*0.38),
+            (x+w*0.34, y+h*0.68),
+            (x+w*0.68, y+h*0.66),
+        ][:count]
+    elif kind in ("architecture", "matrix"):
+        ordered = pts
+    else:
+        ordered = pts
 
-    elif kind == "metrics":
-        # Qualitative visualization only unless actual numeric data is supplied.
-        bars = labels[:3] if len(labels) >= 3 else ["SIGNAL", "CHANGE", "RESULT"]
-        bx, by, bw = x+170, y+110, w-340
-        for i, text in enumerate(bars):
-            yy = by + i*105
-            draw.text((bx, yy), text.upper()[:28], font=label_font, fill=p["text"])
-            for dot in range(5):
-                px = bx + bw - 180 + dot*36
-                fill = p["accent"] if dot <= i else p["bg"]
-                draw.ellipse((px-9, yy+46, px+9, yy+64), fill=fill, outline=p["muted"])
-        draw.text((bx, by+345), "QUALITATIVE SIGNAL — NO INVENTED NUMBERS", font=body_font, fill=p["muted"])
+    # Background nodes: lower contrast, blurred, creating depth.
+    depth = Image.new("RGBA", layer.size, (0, 0, 0, 0))
+    dd = ImageDraw.Draw(depth)
+    rng = random.Random(seed + 211)
+    for _ in range(12):
+        px = rng.randint(x+40, x+w-40)
+        py = rng.randint(y+35, y+h-35)
+        rr = rng.randint(5, 13)
+        dd.ellipse((px-rr, py-rr, px+rr, py+rr), fill=(*p["accent"], rng.randint(18, 45)))
+    depth = depth.filter(ImageFilter.GaussianBlur(7))
+    layer.alpha_composite(depth)
 
-    elif kind == "timeline":
-        events = (labels + ["NEXT"])[:4]
-        yy = y + 230
-        x1, x2 = x+130, x+w-130
-        draw.line((x1,yy,x2,yy), fill=p["muted"], width=5)
-        for i, text in enumerate(events):
-            px = x1 + i*(x2-x1)/max(1,len(events)-1)
-            draw.ellipse((px-25,yy-25,px+25,yy+25), fill=p["accent"])
-            center_text(draw, f"{i+1}", (px-25,yy-25,px+25,yy+25), label_font, p["bg"])
-            center_text(draw, text.upper()[:22], (px-115,yy+55,px+115,yy+110), body_font, p["text"])
+    # One luminous route connects the concepts.
+    if len(ordered) >= 2:
+        path = []
+        for i, pt in enumerate(ordered):
+            if i == 0:
+                path.append(pt)
+                continue
+            px, py = ordered[i-1]
+            qx, qy = pt
+            # Smooth cubic-ish interpolation represented by multiple points.
+            for t in [0.18, 0.36, 0.54, 0.72, 0.88, 1.0]:
+                ease = t*t*(3-2*t)
+                bend = math.sin(t*math.pi) * (22 if i % 2 else -18)
+                path.append((
+                    px + (qx-px)*ease,
+                    py + (qy-py)*ease + bend,
+                ))
+        _draw_glow_line(layer, path, p["accent"], width=4, glow=18)
 
-    elif kind == "journey":
-        events = (labels + ["OUTCOME"])[:4]
-        for i, text in enumerate(events):
-            bx = x + 90 + i*((w-180)/4)
-            cy = y + 225 + (25 if i % 2 else -25)
-            draw.ellipse((bx-52,cy-52,bx+52,cy+52), fill=p["panel"], outline=p["accent"], width=4)
-            center_text(draw, str(i+1), (bx-40,cy-40,bx+40,cy+40), big_font, p["accent"])
-            center_text(draw, text.upper()[:18], (bx-100,cy+70,bx+100,cy+120), body_font, p["text"])
-            if i < len(events)-1:
-                nx = x + 90 + (i+1)*((w-180)/4)
-                draw.line((bx+58,cy,nx-58,cy), fill=p["muted"], width=4)
+    # Active point: the conceptual "now".
+    active_idx = min(len(ordered)-1, max(0, seed % len(ordered)))
+    ax, ay = ordered[active_idx]
+    halo = Image.new("RGBA", layer.size, (0, 0, 0, 0))
+    hd = ImageDraw.Draw(halo)
+    for rr, alpha in ((48, 18), (30, 30), (16, 65)):
+        hd.ellipse((ax-rr, ay-rr, ax+rr, ay+rr), fill=(*p["accent"], alpha))
+    halo = halo.filter(ImageFilter.GaussianBlur(9))
+    layer.alpha_composite(halo)
+    ImageDraw.Draw(layer).ellipse(
+        (ax-7, ay-7, ax+7, ay+7),
+        fill=(*p["accent"], 250),
+    )
 
-    elif kind == "evidence":
-        claim = safe_text(scene.get("key_claim") or scene.get("claim") or (labels[0] if labels else "KEY FINDING"))
-        source = safe_text(scene.get("source") or scene.get("citation") or "SOURCE / EVIDENCE")
-        rect(draw,(x+100,y+75,x+w-100,y+h-65),p["panel"],p["accent"],3,30)
-        draw.text((x+150,y+120),"EVIDENCE",font=title_font,fill=p["accent"])
-        lines = wrap(draw, claim, label_font, w-350, 3)
-        yy=y+190
-        for line in lines:
-            center_text(draw,line,(x+150,yy,x+w-150,yy+55),label_font,p["text"]); yy+=65
-        draw.line((x+150,y+h-175,x+w-150,y+h-175),fill=p["muted"],width=2)
-        center_text(draw,source[:60],(x+150,y+h-150,x+w-150,y+h-95),body_font,p["muted"])
+    # Labels float around the path; no rigid equal-width cards.
+    for i, label in enumerate(labels[:count]):
+        px, py = ordered[i]
+        # Slight vertical breathing offset gives asymmetry.
+        py += int(math.sin((seed+i)*0.9) * 10)
+        _draw_callout(
+            layer,
+            (px, py),
+            label,
+            p,
+            seed+i,
+            scale=1.0 if i == active_idx else 0.94,
+            active=(i == active_idx),
+        )
 
-    elif kind == "decision":
-        options = (labels + ["TRADE-OFF", "DECISION"])[:3]
-        for i,text in enumerate(options):
-            bx=x+120+i*430; by=y+135
-            rect(draw,(bx,by,bx+350,by+210),p["panel"],p["accent"] if i==2 else p["muted"],3,26)
-            center_text(draw,str(i+1),(bx,by+20,bx+350,by+80),big_font,p["accent"] if i==2 else p["muted"])
-            center_text(draw,text.upper()[:20],(bx+20,by+95,bx+330,by+165),label_font,p["text"])
-            if i<2:
-                draw.line((bx+355,by+105,bx+420,by+105),fill=p["muted"],width=4)
-        center_text(draw,"CHOOSE BASED ON CONTEXT",(x+200,y+h-75,x+w-200,y+h-25),body_font,p["accent2"])
+    # Minimal scene-type micro label.
+    micro = {
+        "flow": "SEQUENCE",
+        "compare": "CONTRAST",
+        "architecture": "SYSTEM MAP",
+        "risk": "FAILURE PATH",
+        "timeline": "EVOLUTION",
+        "journey": "TRAJECTORY",
+        "evidence": "EVIDENCE",
+        "decision": "DECISION",
+        "steps": "MECHANISM",
+        "quote": "SIGNAL",
+        "metrics": "SIGNAL",
+        "matrix": "TRADE-OFF",
+    }.get(kind, "SIGNAL")
 
-    elif kind == "steps":
-        steps = (labels + ["IMPLICATION", "OUTCOME"])[:4]
-        bw=(w-60)/2; gapx,gapy=60,45; by=y+35
-        for i,text in enumerate(steps):
-            row,col=divmod(i,2); bx=x+col*(bw+gapx); yy=by+row*(155+gapy)
-            rect(draw,(bx,yy,bx+bw,yy+155),p["panel"],p["accent"],3,24)
-            center_text(draw,f"{i+1}",(bx+18,yy+18,bx+80,yy+75),label_font,p["accent"])
-            center_text(draw,text.upper()[:25],(bx+70,yy+35,bx+bw-20,yy+120),label_font,p["text"])
+    mf = ImageFont.truetype(FONT, 16)
+    ImageDraw.Draw(layer).text(
+        (x+10, y+h-24),
+        micro,
+        font=mf,
+        fill=(*p["muted"], 145),
+    )
 
-    elif kind == "quote":
-        quote = safe_text(scene.get("quote") or scene.get("key_claim") or (labels[0] if labels else "KEY IDEA"))
-        rect(draw,(x+150,y+70,x+w-150,y+h-70),p["panel"],p["accent"],3,30)
-        center_text(draw,'“',(x+210,y+85,x+330,y+220),ImageFont.truetype(BOLD,105),p["accent"])
-        lines=wrap(draw,quote,label_font,w-420,4); yy=y+220
-        for line in lines:
-            center_text(draw,line,(x+220,yy,x+w-220,yy+52),label_font,p["text"]); yy+=60
-        center_text(draw,"ORIGINAL COMMENTARY",(x+250,y+h-145,x+w-250,y+h-90),body_font,p["muted"])
 
-    else:  # matrix
-        size=165; gap=30; gx=x+w/2-size-gap/2; gy=y+95
-        labels2=(labels+["LOW","HIGH","RISK","VALUE"])[:4]
-        for r in range(2):
-            for c in range(2):
-                bx=gx+c*(size+gap); by=gy+r*(size+gap)
-                rect(draw,(bx,by,bx+size,by+size),p["panel"],p["accent"],3)
-                center_text(draw,labels2[r*2+c].upper()[:14],(bx+10,by+35,bx+size-10,by+125),label_font,p["text"])
 
 def make_card(scene, index, title, p, path, visual_path=None):
-    from PIL import Image, ImageDraw, ImageFont
-    W,H = 1920,1080
-    img = Image.new("RGB", (W,H), p["bg"])
+    from PIL import Image, ImageDraw, ImageFont, ImageFilter
+    W, H = 1920, 1080
+    img = Image.new("RGB", (W, H), p["bg"])
     draw = ImageDraw.Draw(img)
-    rect(draw,(45,45,W-45,H-45),p["bg"],p["accent"],3,28)
-    top = ImageFont.truetype(BOLD, 25)
-    scene_f = ImageFont.truetype(FONT, 23)
-    draw.text((85,82),"uncommonAI",font=top,fill=p["text"])
-    draw.text((W-245,85),f"SCENE {index:02d}",font=scene_f,fill=p["muted"])
-    draw.rounded_rectangle((85,118,W-85,128),radius=5,fill=p["panel"])
-    draw.rounded_rectangle((85,118,85+int((W-170)*min(index/8,1.0)),128),radius=5,fill=p["accent"])
 
-    title_f = font_fit(draw,title,BOLD,68,42,1580)
-    title_lines = wrap(draw,title,title_f,1580,2)
-    yy=155
+    # Premium cinematic frame: almost no hard UI chrome.
+    draw.rectangle((0, 0, W, H), fill=p["bg"])
+    draw.rounded_rectangle(
+        (48, 48, W-48, H-48),
+        radius=34,
+        fill=p["bg"],
+        outline=(*p["accent"], 90),
+        width=2,
+    )
+
+    top = ImageFont.truetype(BOLD, 24)
+    meta = ImageFont.truetype(FONT, 19)
+    draw.text((88, 78), "uncommonAI", font=top, fill=p["text"])
+    draw.text((W-260, 82), f"{index:02d} / 08", font=meta, fill=p["muted"])
+
+    # Fine progress line, intentionally understated.
+    draw.rounded_rectangle((88, 118, W-88, 121), radius=2, fill=p["panel"])
+    draw.rounded_rectangle(
+        (88, 118, 88 + int((W-176) * min(index/8, 1.0)), 121),
+        radius=2,
+        fill=p["accent"],
+    )
+
+    # Title is editorial context, not the hero object.
+    title_f = font_fit(draw, title, BOLD, 54, 36, 1420)
+    title_lines = wrap(draw, title, title_f, 1420, 2)
+    yy = 153
     for line in title_lines:
-        bb=draw.textbbox((0,0),line,font=title_f)
-        draw.text(((W-(bb[2]-bb[0]))/2,yy),line,font=title_f,fill=p["text"])
-        yy += bb[3]-bb[1]+8
+        bb = draw.textbbox((0, 0), line, font=title_f)
+        draw.text(
+            ((W-(bb[2]-bb[0]))/2, yy),
+            line,
+            font=title_f,
+            fill=p["text"],
+        )
+        yy += bb[3]-bb[1]+6
 
-    # Large visual zone; no text is allowed in subtitle zone below 900.
-    # V14 moves the visual layer into a separate transparent image so it can
-    # animate independently from the editorial card.
-    rect(draw,(90,340,W-90,870),p["panel"],p["accent"],2,30)
+    # Large atmospheric stage. Keep lower region clean for subtitles.
+    stage = (95, 325, W-190, 545)
+    stage_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    sl = ImageDraw.Draw(stage_layer)
 
-    if visual_path:
-        from PIL import Image
-        layer=Image.new("RGBA",(W,H),(0,0,0,0))
-        ld=ImageDraw.Draw(layer)
-        rect(ld,(90,340,W-90,870),p["panel"],p["accent"],2,30)
-        kind=scene.get("_renderer_visual_kind") or visual_kind(scene,index)
-        draw_visual(ld,kind,(145,385,W-290,450),p,scene)
-        layer.save(visual_path)
+    # Frosted stage boundary, not a rigid panel.
+    sl.rounded_rectangle(
+        (stage[0], stage[1], stage[0]+stage[2], stage[1]+stage[3]),
+        radius=32,
+        fill=(*p["panel"], 110),
+        outline=(*p["accent"], 80),
+        width=1,
+    )
 
-    # Tiny branded footer only above the subtitle-safe zone.
-    draw.line((90,900,W-90,900),fill=p["accent"],width=2)
-    foot=ImageFont.truetype(FONT,21)
-    draw.text((90,922),"AI-assisted research • original commentary",font=foot,fill=p["muted"])
-    img.save(path,quality=95)
+    kind = scene.get("_renderer_visual_kind") or visual_kind(scene, index)
+    draw_visual(
+        stage_layer,
+        kind,
+        (stage[0]+34, stage[1]+28, stage[2]-68, stage[3]-56),
+        p,
+        scene,
+        seed=index*101,
+    )
+
+    # Soft mask at stage edges so the visual fades naturally into the void.
+    stage_layer.save(visual_path)
+
+    # Main card intentionally contains no duplicated diagram; the visual
+    # layer is composited independently and animated in render_scene.
+    draw.line((95, 895, W-95, 895), fill=(*p["accent"], 70), width=1)
+
+    foot = ImageFont.truetype(FONT, 18)
+    draw.text(
+        (95, 918),
+        "AI-assisted research  •  original analysis",
+        font=foot,
+        fill=p["muted"],
+    )
+
+    img.save(path, quality=95)
 
 
 def render_scene(index, scene, title, p):
-    audio=VIDEO_DIR/f"scene_{index:02d}.mp3"
-    image=VIDEO_DIR/f"scene_{index:02d}.png"
-    visual_layer=VIDEO_DIR/f"scene_{index:02d}_visual.png"
-    ass=VIDEO_DIR/f"scene_{index:02d}.ass"
-    out=VIDEO_DIR/f"segment_{index:02d}.mp4"
-    narration=safe_text(scene.get("narration"))
-    if not narration: raise SystemExit(f"Scene {index} has no narration.")
-    scene_title=safe_text(scene.get("title") or scene.get("heading") or scene.get("key_phrase") or f"Scene {index}")
-    run(["edge-tts","--voice",VOICE,"--text",narration,"--write-media",str(audio)])
-    duration=audio_duration(audio)
-    make_card(scene,index,scene_title,p,image,visual_layer)
-    make_ass(narration,duration,ass)
-    ass_path=str(ass).replace("\\","/").replace(":","\\:").replace("'","\\'")
-    # V14.2 animation: use the visual PNG as a real looping FFmpeg input.
-    # The previous movie-filter approach could silently produce an empty
-    # overlay on GitHub runners. A dedicated -loop 1 input is deterministic.
-    # Subtitles are applied last so motion never disturbs the subtitle-safe zone.
-    base=(
-        "scale=1970:1108,"
-        "zoompan=z='1.0+0.018*min(on/(30*2.5),1)':"
-        "x='iw/2-(iw/zoom/2)+6*sin(on/55)':"
-        "y='ih/2-(ih/zoom/2)+4*cos(on/63)':"
-        "d=1:s=1920x1080:fps=30"
-        "[base]"
-    )
-    vf=(
-        f"[0:v]{base};"
-        "[2:v]format=rgba,setpts=PTS-STARTPTS,"
-        "scale=1970:1108,"
-        "zoompan=z='1.0+0.025*min(on/(30*0.8),1)':"
-        "x='iw/2-(iw/zoom/2)':"
-        "y='ih/2-(ih/zoom/2)':"
-        "d=1:s=1970x1108:fps=30,"
-        "fade=t=in:st=0:d=0.55:alpha=1[vl];"
-        "[base][vl]"
-        "overlay=x=0:"
-        "y='if(lt(t,0.55),28*(1-t/0.55),0)':"
-        "format=auto[composite];"
-        "[composite]"
-        "drawbox="
-        "x='if(lt(t,0.9),80+(iw-240)*t/0.9,iw-160)':"
-        "y=126:w=120:h=4:color=white@0.45:t=fill,"
-        "fade=t=in:st=0:d=0.25,"
-        f"subtitles='{ass_path}'[vout]"
-    )
-    run([
-        "ffmpeg","-y",
-        "-loop","1","-i",str(image),
-        "-i",str(audio),
-        "-loop","1","-i",str(visual_layer),
-        "-filter_complex",vf,
-        "-map","[vout]",
-        "-map","1:a",
-        "-c:v","libx264",
-        "-preset","veryfast",
-        "-tune","stillimage",
-        "-pix_fmt","yuv420p",
-        "-c:a","aac",
-        "-b:a","192k",
-        "-shortest",
-        "-t",str(duration),
-        "-movflags","+faststart",
-        str(out)
-    ])
-    if not out.exists() or out.stat().st_size==0: raise SystemExit(f"Scene {index} was not created correctly.")
-    return out
+    audio = VIDEO_DIR / f"scene_{index:02d}.mp3"
+    image = VIDEO_DIR / f"scene_{index:02d}.png"
+    visual_layer = VIDEO_DIR / f"scene_{index:02d}_visual.png"
+    ass = VIDEO_DIR / f"scene_{index:02d}.ass"
+    out = VIDEO_DIR / f"segment_{index:02d}.mp4"
 
+    narration = safe_text(scene.get("narration"))
+    if not narration:
+        raise SystemExit(f"Scene {index} has no narration.")
+
+    scene_title = safe_text(
+        scene.get("title")
+        or scene.get("heading")
+        or scene.get("key_phrase")
+        or f"Scene {index}"
+    )
+
+    run([
+        "edge-tts",
+        "--voice", VOICE,
+        "--text", narration,
+        "--write-media", str(audio),
+    ])
+
+    duration = audio_duration(audio)
+    make_card(scene, index, scene_title, p, image, visual_layer)
+    make_ass(narration, duration, ass)
+
+    ass_path = str(ass).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+
+    # Two independent looping inputs:
+    #   0 = cinematic background card
+    #   1 = narration
+    #   2 = transparent visual layer
+    #
+    # The visual gets:
+    #   - gentle scale-in
+    #   - upward drift
+    #   - fade-in
+    #   - no bouncy easing
+    #
+    # The card gets an almost imperceptible camera drift.
+    vf = (
+        "[0:v]"
+        "scale=1970:1108,"
+        "zoompan="
+        "z='1.0+0.010*min(on/(30*4.0),1)':"
+        "x='iw/2-(iw/zoom/2)+3*sin(on/85)':"
+        "y='ih/2-(ih/zoom/2)+2*cos(on/97)':"
+        "d=1:s=1920x1080:fps=30"
+        "[base];"
+
+        "[2:v]"
+        "format=rgba,"
+        "scale=1970:1108,"
+        "zoompan="
+        "z='0.965+0.035*min(on/(30*0.85),1)':"
+        "x='iw/2-(iw/zoom/2)':"
+        "y='ih/2-(ih/zoom/2)+10*(1-min(on/(30*0.85),1))':"
+        "d=1:s=1970x1108:fps=30,"
+        "fade=t=in:st=0:d=0.65:alpha=1"
+        "[visual];"
+
+        "[base][visual]"
+        "overlay=x=0:y=0:format=auto"
+        "[comp];"
+
+        # A thin accent sweep assembles at the top of the visual stage.
+        "[comp]"
+        "drawbox="
+        "x='96+min(t/0.9,1)*(iw-192)':"
+        "y=315:w=170:h=2:"
+        "color=white@0.42:t=fill,"
+        "fade=t=in:st=0:d=0.35,"
+        f"subtitles='{ass_path}'"
+        "[vout]"
+    )
+
+    run([
+        "ffmpeg", "-y",
+        "-loop", "1", "-i", str(image),
+        "-i", str(audio),
+        "-loop", "1", "-i", str(visual_layer),
+        "-filter_complex", vf,
+        "-map", "[vout]",
+        "-map", "1:a",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-tune", "stillimage",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-shortest",
+        "-t", str(duration),
+        "-movflags", "+faststart",
+        str(out),
+    ])
+
+    if not out.exists() or out.stat().st_size == 0:
+        raise SystemExit(f"Scene {index} was not created correctly.")
+
+    return out
 
 def main():
     if not PACKAGE_FILE.exists(): raise SystemExit(f"Missing {PACKAGE_FILE}")
