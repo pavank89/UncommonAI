@@ -1,4 +1,4 @@
-name: uncommonAI Autopilot V4
+name: uncommonAI Autopilot V5
 
 on:
   schedule:
@@ -75,14 +75,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install system dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
-
-      - name: Install Python dependencies
-        run: |
-          pip install feedparser pillow edge-tts google-auth google-api-python-client
+          pip install pillow edge-tts google-auth google-api-python-client
 
       - name: Extract approved topic
         env:
@@ -149,6 +146,8 @@ jobs:
       - name: Install video renderer
         run: |
           cp .github/workflow/video_renderer.py ./video_renderer.py
+          cp .github/workflow/short_renderer.py ./short_renderer.py
+          cp .github/workflow/youtube_shorts_uploader.py ./youtube_shorts_uploader.py
 
       - name: Verify video dependencies
         run: |
@@ -184,6 +183,28 @@ jobs:
         run: |
           python .github/workflow/youtube_uploader.py
 
+      - name: Render 3 Shorts
+        run: |
+          python ./short_renderer.py
+
+      - name: Validate Shorts
+        run: |
+          test -s ./workspace/shorts/short_01.mp4
+          test -s ./workspace/shorts/short_02.mp4
+          test -s ./workspace/shorts/short_03.mp4
+          ffprobe -v error -show_entries format=duration,size \
+            -of default=noprint_wrappers=1 ./workspace/shorts/short_01.mp4
+          ffprobe -v error -show_entries format=duration,size \
+            -of default=noprint_wrappers=1 ./workspace/shorts/short_02.mp4
+          ffprobe -v error -show_entries format=duration,size \
+            -of default=noprint_wrappers=1 ./workspace/shorts/short_03.mp4
+
+      - name: Upload 3 Shorts to YouTube
+        env:
+          YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+        run: |
+          python ./youtube_shorts_uploader.py
+
       - name: Save video production files
         uses: actions/upload-artifact@v4
         with:
@@ -192,12 +213,20 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+      - name: Save Shorts production files
+        uses: actions/upload-artifact@v4
+        with:
+          name: uncommonai-shorts-production
+          path: ./workspace/shorts/
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Request final approval
         if: github.event_name == 'issue_comment'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue comment ${{ github.event.issue.number }} --body "✅ Production package, MP4, and YouTube upload are complete. The video has been published to YouTube."
+          gh issue comment ${{ github.event.issue.number }} --body "✅ Production package, MP4, 3 Shorts, and YouTube uploads are complete."
 
   final_approval:
     if: github.event_name == 'issue_comment' && github.event.issue.pull_request == null && contains(github.event.comment.body, 'PUBLISH') && contains(github.event.issue.body, '<!-- uncommonai-topic-approval -->')
