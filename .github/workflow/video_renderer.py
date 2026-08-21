@@ -163,6 +163,9 @@ def visual_kind(scene, index, previous=None):
         "warning": "risk", "failure": "risk", "fact": "evidence",
         "claim": "evidence", "quote": "quote", "timeline": "timeline",
         "journey": "journey", "decision": "decision", "matrix": "matrix",
+        # Producer-facing names that must map to an actual renderer.
+        "hook": "journey",
+        "takeaway": "decision",
     }
     for key, value in aliases.items():
         if key in explicit:
@@ -411,7 +414,7 @@ def render_scene(index, scene, title, p):
           "x='iw/2-(iw/zoom/2)+6*sin(on/55)':"
           "y='ih/2-(ih/zoom/2)+4*cos(on/63)':d=1:s=1920x1080:fps=30")
     vf=(base+","
-        f"movie='{str(visual_layer).replace(chr(92),'/').replace(':','\\:')}'[v];"
+        f"movie='{str(visual_layer).replace(chr(92),'/').replace(':','\\:')}':loop=1[v];"
         "[v]format=rgba,fade=t=in:st=0:d=0.55:alpha=1,"
         "scale=1970:1108[vl];"
         "[0:v][vl]overlay=x=0:y='if(lt(t,0.55),28*(1-t/0.55),0)':format=auto,"
