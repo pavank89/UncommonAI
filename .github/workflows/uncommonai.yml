@@ -143,25 +143,19 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-      - name: Install video renderer
-        run: |
-          cp .github/workflow/video_renderer.py ./video_renderer.py
-          cp .github/workflow/short_renderer.py ./short_renderer.py
-          cp .github/workflow/youtube_shorts_uploader.py ./youtube_shorts_uploader.py
-
       - name: Verify video dependencies
         run: |
           ffmpeg -version | head -n 1
           ffprobe -version | head -n 1
           edge-tts --version
 
-      - name: Render MP4 video
+      - name: Render long-form MP4
         env:
           VIDEO_VOICE: en-US-AriaNeural
         run: |
-          python ./video_renderer.py
+          python .github/workflow/video_renderer.py
 
-      - name: Validate MP4
+      - name: Validate long-form MP4
         run: |
           test -s ./workspace/uncommonAI_video.mp4
           ffprobe -v error \
@@ -169,7 +163,7 @@ jobs:
             -of default=noprint_wrappers=1 \
             ./workspace/uncommonAI_video.mp4
 
-      - name: Save MP4 video
+      - name: Save long-form MP4
         uses: actions/upload-artifact@v4
         with:
           name: uncommonai-video
@@ -177,35 +171,36 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-      - name: Upload video to YouTube
+      - name: Upload long-form video to YouTube
         env:
           YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
         run: |
           python .github/workflow/youtube_uploader.py
 
       - name: Render 3 Shorts
+        env:
+          VIDEO_VOICE: en-US-AriaNeural
         run: |
-          python ./short_renderer.py
+          python .github/workflow/short_renderer.py
 
       - name: Validate Shorts
         run: |
-          test -s ./workspace/shorts/short_01.mp4
-          test -s ./workspace/shorts/short_02.mp4
-          test -s ./workspace/shorts/short_03.mp4
-          ffprobe -v error -show_entries format=duration,size \
-            -of default=noprint_wrappers=1 ./workspace/shorts/short_01.mp4
-          ffprobe -v error -show_entries format=duration,size \
-            -of default=noprint_wrappers=1 ./workspace/shorts/short_02.mp4
-          ffprobe -v error -show_entries format=duration,size \
-            -of default=noprint_wrappers=1 ./workspace/shorts/short_03.mp4
+          for f in ./workspace/shorts/short_01.mp4 \
+                   ./workspace/shorts/short_02.mp4 \
+                   ./workspace/shorts/short_03.mp4; do
+            test -s "$f"
+            ffprobe -v error \
+              -show_entries format=duration,size \
+              -of default=noprint_wrappers=1 "$f"
+          done
 
       - name: Upload 3 Shorts to YouTube
         env:
           YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
         run: |
-          python ./youtube_shorts_uploader.py
+          python .github/workflow/youtube_shorts_uploader.py
 
-      - name: Save video production files
+      - name: Save long-form production files
         uses: actions/upload-artifact@v4
         with:
           name: uncommonai-video-production
@@ -226,7 +221,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue comment ${{ github.event.issue.number }} --body "✅ Production package, MP4, 3 Shorts, and YouTube uploads are complete."
+          gh issue comment ${{ github.event.issue.number }} --body "✅ Production package, long-form MP4, 3 Shorts, and YouTube uploads are complete."
 
   final_approval:
     if: github.event_name == 'issue_comment' && github.event.issue.pull_request == null && contains(github.event.comment.body, 'PUBLISH') && contains(github.event.issue.body, '<!-- uncommonai-topic-approval -->')
