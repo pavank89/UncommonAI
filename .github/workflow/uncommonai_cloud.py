@@ -2,7 +2,7 @@ import os, json, re, urllib.request
 from pathlib import Path
 import feedparser
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[2]
 WORK = ROOT / "workspace"
 WORK.mkdir(exist_ok=True)
 
