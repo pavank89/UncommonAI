@@ -186,25 +186,57 @@ The workflow will not publish anything from this approval step.
         )
         print("Approval issue:", issue["html_url"])
 
-def openai_client():
-    if not OPENAI_API_KEY:
+def gemini_generate(prompt):
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
         raise SystemExit(
-            "OPENAI_API_KEY is required for production. "
+            "GEMINI_API_KEY is required for production. "
             "Research mode does not require it."
         )
-    from openai import OpenAI
-    return OpenAI(api_key=OPENAI_API_KEY)
 
-def json_response(client, prompt):
-    r = client.responses.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-5.6-luna"),
-        input=prompt
+    model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        + model
+        + ":generateContent?key="
+        + api_key
     )
-    text = re.sub(r"^```json\s*|\s*```$", "", r.output_text.strip(), flags=re.I)
-    return json.loads(text)
+
+    payload = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.7,
+            "responseMimeType": "application/json",
+        },
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    except Exception as exc:
+        raise SystemExit(f"Gemini API request failed: {exc}")
+
+    try:
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError, TypeError):
+        raise SystemExit(f"Unexpected Gemini response: {json.dumps(data)[:2000]}")
+
+    text = re.sub(r"^```json\s*|\s*```$", "", text.strip(), flags=re.I)
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Gemini returned invalid JSON: {exc}\n{text[:3000]}")
+
 
 def build_package(topic):
-    client = openai_client()
     prompt = f"""
 You are the lead producer for the faceless YouTube channel uncommonAI.
 
@@ -212,55 +244,94 @@ Audience:
 Curious professionals, creators and tech enthusiasts who want to understand
 important AI developments without needing an engineering background.
 
-Approved concept:
+APPROVED TOPIC:
 {topic}
 
-Create one ORIGINAL 7-10 minute YouTube package.
+Create one ORIGINAL 7-10 minute YouTube package specifically about the
+approved topic.
 
-Rules:
-- The concept must be transformed into an engaging story, not a rewrite of a
-  source article.
+CRITICAL TOPIC RULES:
+- Stay faithful to the approved topic.
+- Do not reuse a previous video's topic, products, examples or framing unless
+  genuinely relevant.
+- Never substitute the topic with "5 AI tools" or another hard-coded concept.
+- If the topic is a list, use the appropriate items for THIS topic.
+- If the topic is about one subject, stay focused on that subject.
+
+CONTENT RULES:
 - Hook viewers in the first 15 seconds.
-- Explain why the development matters.
+- Explain why the topic matters.
 - Use simple language before technical detail.
 - Never invent statistics, quotes, benchmarks, demonstrations or capabilities.
 - Separate verified facts from interpretation.
 - Include source URLs in the sources array.
 - Avoid generic AI-news roundup structure.
 - Give the viewer a clear takeaway.
-- Create 8 visual scenes.
-- Create 3 Shorts derived from the original story but with different hooks.
+- Create exactly 8 visual scenes.
+- Create exactly 3 Shorts derived from the same story, each with a different
+  hook, angle and takeaway.
+- Shorts should be suitable for vertical 9:16 video and approximately
+  30-55 seconds each.
 - Return valid JSON only.
 
 Schema:
 {{
-"title": "...",
-"description": "...",
-"tags": ["..."],
-"thumbnail_prompt": "...",
-"script": "...",
-"scenes": [
-  {{"narration":"...", "visual_prompt":"..."}}
-],
-"shorts": [
-  {{"title":"...", "script":"...", "visual_prompt":"..."}}
-],
-"sources": ["https://..."]
+  "title": "...",
+  "description": "...",
+  "tags": ["..."],
+  "thumbnail_prompt": "...",
+  "script": "...",
+  "scenes": [
+    {{"narration":"...", "visual_prompt":"..."}}
+  ],
+  "shorts": [
+    {{
+      "title":"...",
+      "script":"...",
+      "visual_prompt":"..."
+    }}
+  ],
+  "sources": ["https://..."]
 }}
 """
-    package = json_response(client, prompt)
+    package = gemini_generate(prompt)
+
+    if not isinstance(package, dict):
+        raise SystemExit("Gemini production response is not a JSON object.")
+
+    scenes = package.get("scenes", [])
+    shorts = package.get("shorts", [])
+
+    if len(scenes) != 8:
+        raise SystemExit(f"Expected 8 scenes, found {len(scenes)}")
+
+    if len(shorts) != 3:
+        raise SystemExit(f"Expected 3 Shorts, found {len(shorts)}")
+
+    (WORK / "production_package.json").write_text(
+        json.dumps(package, indent=2), encoding="utf-8"
+    )
+    # Keep the older package filename too for compatibility with any tooling
+    # that still expects it.
     (WORK / "package.json").write_text(
         json.dumps(package, indent=2), encoding="utf-8"
     )
+
     return package
 
+
 def quality_gate(package):
-    client = openai_client()
+    # The quality gate uses the same Gemini credential as production.
     prompt = f"""
 Act as an extremely strict YouTube editorial and YPP-quality reviewer.
 
-Review:
+APPROVED TOPIC:
+{APPROVED_TOPIC}
+
+Review this generated package:
 {json.dumps(package, indent=2)}
+
+Judge ONLY against the approved topic and the actual package.
 
 Return JSON only:
 {{
@@ -282,13 +353,23 @@ Fail if the package:
 - contains unsupported factual claims;
 - lacks meaningful original explanation or commentary;
 - uses repetitive templates with little viewer value;
-- has high copyright or YPP risk.
+- has high copyright or YPP risk;
+- does not actually address the approved topic.
+
+Also verify:
+- major factual claims have appropriate evidence;
+- the title matches the actual video;
+- the opening hook is specific and useful;
+- the 3 Shorts have genuinely different hooks/angles;
+- no fabricated statistics, quotes, benchmarks or capabilities appear.
 """
-    gate = json_response(client, prompt)
+    gate = gemini_generate(prompt)
+
     (WORK / "quality_gate.json").write_text(
         json.dumps(gate, indent=2), encoding="utf-8"
     )
     return gate
+
 
 def produce():
     if not APPROVED_TOPIC:
@@ -302,35 +383,11 @@ def produce():
             "Quality gate failed. See workspace/quality_gate.json."
         )
 
-    body = f"""# uncommonAI — production ready
-
-<!-- uncommonai-production -->
-
-## {package['title']}
-
-Quality gate: **PASS**
-
-Originality: {gate.get('originality')}
-Viewer value: {gate.get('viewer_value')}
-Evidence quality: {gate.get('evidence_quality')}
-Title quality: {gate.get('title_quality')}
-Hook quality: {gate.get('hook_quality')}
-
-The package is stored in the workflow artifact.
-
-### Final approval
-
-Comment **PUBLISH** only after reviewing the generated package.
-
-No YouTube upload occurs from the topic approval.
-"""
-
-    issue = create_issue(
-        f"🎬 uncommonAI — final approval: {package['title']}",
-        body,
-        ["uncommonai:ready-to-publish"]
-    )
-    print("Final approval issue:", issue["html_url"])
+    print("QUALITY GATE: PASS")
+    print("Title:", package.get("title"))
+    print("Scenes:", len(package.get("scenes", [])))
+    print("Shorts:", len(package.get("shorts", [])))
+    print("Production package:", WORK / "production_package.json")
 
 if __name__ == "__main__":
     if MODE == "research":
